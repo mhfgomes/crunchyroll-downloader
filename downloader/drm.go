@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Eyevinn/mp4ff/mp4"
@@ -133,35 +134,37 @@ func sendChallenge(contentId, videoToken string, challenge []byte) ([]byte, erro
 	return decoded, nil
 }
 
+// getWidevineDevice loads the CDM from Options.WidevinePath: a ".wvd" file,
+// or a directory (the working directory by default) holding a ".wvd" file or
+// "client_id.bin" and "private_key.pem".
 func getWidevineDevice() (*widevine.Device, error) {
+	dir := options.WidevinePath
+	if dir == "" {
+		dir = "."
+	}
+	if strings.HasSuffix(strings.ToLower(dir), ".wvd") {
+		return loadWVD(dir)
+	}
+
 	var clientID []byte
 	var privateKey []byte
-	files, _ := os.ReadDir(".")
+	files, _ := os.ReadDir(dir)
 	for _, file := range files {
+		path := filepath.Join(dir, file.Name())
 		if strings.HasSuffix(file.Name(), ".wvd") {
-			wvd, err := os.Open(file.Name())
-			if err != nil {
-				return nil, err
-			}
-
-			return widevine.NewDevice(widevine.FromWVD(io.NopCloser(wvd)))
+			return loadWVD(path)
 		} else if file.Name() == "client_id.bin" {
-			f, err := os.Open("client_id.bin")
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return nil, err
 			}
-			defer f.Close()
-
-			clientID, err = io.ReadAll(f)
+			clientID = data
 		} else if file.Name() == "private_key.pem" {
-			f, err := os.Open("private_key.pem")
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return nil, err
 			}
-			defer f.Close()
-
-			privateKey, err = io.ReadAll(f)
-			break
+			privateKey = data
 		}
 	}
 
@@ -170,6 +173,21 @@ func getWidevineDevice() (*widevine.Device, error) {
 	}
 
 	return nil, nil
+}
+
+func loadWVD(path string) (*widevine.Device, error) {
+	wvd, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer wvd.Close()
+	return widevine.NewDevice(widevine.FromWVD(wvd))
+}
+
+// HasWidevineDevice reports whether a CDM is available for decryption.
+func HasWidevineDevice() bool {
+	device, err := getWidevineDevice()
+	return err == nil && device != nil
 }
 
 func getLicense(psshData, contentId, videoToken string) ([]*widevine.Key, error) {

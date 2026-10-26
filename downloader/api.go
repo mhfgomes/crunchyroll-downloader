@@ -23,6 +23,9 @@ type Options struct {
 	Simultaneous  int           `json:"simultaneous"`
 	DownloadDelay time.Duration `json:"downloadDelay"`
 	DebugManifest bool          `json:"debugManifest"`
+	// WidevinePath is a ".wvd" file or a directory holding the CDM files;
+	// empty means the working directory.
+	WidevinePath string `json:"widevinePath"`
 }
 
 // DefaultOptions returns the same defaults as the CLI flags.

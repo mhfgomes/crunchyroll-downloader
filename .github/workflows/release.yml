@@ -50,3 +50,35 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
           ARTIFACT: ${{ matrix.artifact }}
         run: gh release upload "$TAG" "$ARTIFACT" --clobber
+
+  gui:
+    name: Build crdl-gui-windows.exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: gui/go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
+
+      - name: Build
+        working-directory: gui
+        run: wails build -trimpath -ldflags "-s -w" -o crdl-gui-windows.exe
+
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" gui/build/bin/crdl-gui-windows.exe --clobber
