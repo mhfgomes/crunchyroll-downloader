@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useState } from "react"
-import { ArrowLeftIcon, CheckIcon, Loader2Icon, SearchIcon, XIcon } from "lucide-react"
+import { ArrowLeftIcon, Loader2Icon, SearchIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
+import { EpisodeTile, SeriesCard, seriesLink } from "@/components/title-cards"
 import { useBackend } from "@/hooks/use-backend"
 import {
   api,
-  audioLocales,
-  episodeCode,
   errorMessage,
   type LookupResult,
   type SearchResult,
+  type SeasonSummary,
   type Title,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -89,7 +89,7 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
   }, [query])
 
   function openSeries(r: SearchResult) {
-    void lookup(`https://www.crunchyroll.com/series/${r.id}`)
+    void lookup(seriesLink(r.id))
   }
 
   function clear() {
@@ -145,15 +145,38 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
     })
   }
 
+  async function queue(titles: Title[]) {
+    if (!loggedIn) {
+      toast.error("Add your etp_rt cookie in Settings before downloading.", {
+        action: { label: "Settings", onClick: onOpenSettings },
+      })
+      return false
+    }
+    titles = [...titles].sort((a, b) => a.season - b.season || a.number - b.number)
+    await api.Enqueue(titles)
+    toast.success(titles.length === 1 ? `Queued ${titles[0].title}` : `Queued ${titles.length} episodes`, {
+      action: { label: "View queue", onClick: onQueued },
+    })
+    return true
+  }
+
   async function download() {
     const titles = [...selected].map((id) => allTitles.get(id)).filter(Boolean) as Title[]
-    titles.sort((a, b) => a.season - b.season || a.number - b.number)
-    await api.Enqueue(titles)
-    toast.success(
-      titles.length === 1 ? `Queued ${titles[0].title}` : `Queued ${titles.length} episodes`
-    )
-    setSelected(new Set())
-    onQueued()
+    if (await queue(titles)) setSelected(new Set())
+  }
+
+  // Queues every episode of a series, or only the given seasons.
+  async function queueSeries(seriesId: string, seasons?: SeasonSummary[]) {
+    if (!loggedIn) return void queue([])
+    const id = toast.loading("Collecting episodes…")
+    try {
+      seasons ??= (await api.Lookup(seriesLink(seriesId))).seasons ?? []
+      const lists = await Promise.all(seasons.map((s) => api.SeasonEpisodes(s.id)))
+      toast.dismiss(id)
+      await queue(lists.flat().filter(Boolean))
+    } catch (err) {
+      toast.error(errorMessage(err), { id })
+    }
   }
 
   const blocked = !loggedIn
@@ -211,7 +234,7 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
           {!result && !loading && searchResults === null && !error && <Intro />}
 
           {!result && !loading && searchResults !== null && (
-            <SearchResults results={searchResults} query={query} onOpen={openSeries} />
+            <SearchResults results={searchResults} query={query} onOpen={openSeries} onQueue={(id, seasons) => void queueSeries(id, seasons)} />
           )}
 
           {loading && <GridSkeleton />}
@@ -268,7 +291,15 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
               ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-x-5 gap-y-7">
                   {visible.map((t) => (
-                    <EpisodeTile key={t.id} title={t} selected={selected.has(t.id)} onToggle={() => toggle(t.id)} />
+                    <EpisodeTile
+                      key={t.id}
+                      title={t}
+                      selected={selected.has(t.id)}
+                      selectedCount={selected.size}
+                      onToggle={() => toggle(t.id)}
+                      onQueue={() => void queue([t])}
+                      onQueueSelected={() => void download()}
+                    />
                   ))}
                 </div>
               )}
@@ -296,52 +327,17 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
   )
 }
 
-function EpisodeTile({ title, selected, onToggle }: { title: Title; selected: boolean; onToggle: () => void }) {
-  const { languageName } = useBackend()
-  const dubs = audioLocales(title)
-  return (
-    <button
-      onClick={onToggle}
-      aria-pressed={selected}
-      className="group text-left outline-none"
-    >
-      <div
-        className={cn(
-          "relative aspect-video overflow-hidden rounded-md bg-muted ring-2 ring-transparent transition-shadow group-focus-visible:ring-ring",
-          selected && "ring-select"
-        )}
-      >
-        {title.thumbnail && (
-          <img
-            src={title.thumbnail}
-            alt=""
-            loading="lazy"
-            className={cn("size-full object-cover transition-opacity", selected ? "opacity-60" : "opacity-90 group-hover:opacity-100")}
-          />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-background/10 to-transparent" />
-        <span className="absolute bottom-1 left-3 font-heading text-5xl leading-none font-extrabold tracking-tighter text-foreground/95 tabular-nums">
-          {title.number || "—"}
-        </span>
-        <span
-          className={cn(
-            "absolute top-2 right-2 flex size-6 items-center justify-center rounded-full border border-white/40 bg-background/40 backdrop-blur transition-colors",
-            selected && "border-select bg-select text-background"
-          )}
-        >
-          {selected && <CheckIcon className="size-3.5" strokeWidth={3} />}
-        </span>
-      </div>
-      <div className="mt-2.5 line-clamp-2 text-sm leading-snug font-medium">{title.title}</div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">
-        {episodeCode(title)}
-        {dubs.length > 0 && `, ${dubs.length === 1 ? languageName(dubs[0]) : `${dubs.length} audio languages`}`}
-      </div>
-    </button>
-  )
-}
-
-function SearchResults({ results, query, onOpen }: { results: SearchResult[]; query: string; onOpen: (r: SearchResult) => void }) {
+function SearchResults({
+  results,
+  query,
+  onOpen,
+  onQueue,
+}: {
+  results: SearchResult[]
+  query: string
+  onOpen: (r: SearchResult) => void
+  onQueue: (seriesId: string, seasons?: SeasonSummary[]) => void
+}) {
   if (results.length === 0) {
     return (
       <p className="pt-10 text-sm text-muted-foreground">
@@ -350,20 +346,14 @@ function SearchResults({ results, query, onOpen }: { results: SearchResult[]; qu
     )
   }
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-5 gap-y-7">
-      {results.map((r) => (
-        <button key={r.id} onClick={() => onOpen(r)} className="group text-left outline-none">
-          <div className="aspect-[2/3] overflow-hidden rounded-md bg-muted ring-2 ring-transparent transition-shadow group-hover:ring-select/60 group-focus-visible:ring-ring">
-            {r.poster && <img src={r.poster} alt="" loading="lazy" className="size-full object-cover" />}
-          </div>
-          <div className="mt-2.5 line-clamp-2 text-sm leading-snug font-medium">{r.title}</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {r.episodeCount > 0 && `${r.episodeCount} episodes`}
-            {r.seasonCount > 1 && `, ${r.seasonCount} seasons`}
-          </div>
-        </button>
-      ))}
-    </div>
+    <>
+      <p className="mb-5 text-sm text-muted-foreground">Right-click a series to queue it without opening it.</p>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-5 gap-y-7">
+        {results.map((r) => (
+          <SeriesCard key={r.id} series={r} onOpen={() => onOpen(r)} onQueue={onQueue} />
+        ))}
+      </div>
+    </>
   )
 }
 
