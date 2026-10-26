@@ -5,6 +5,7 @@ import type { downloader, main } from "../../wailsjs/go/models"
 export type Title = downloader.Title
 export type Options = downloader.Options
 export type LookupResult = downloader.LookupResult
+export type SearchResult = downloader.SearchResult
 export type SeasonSummary = downloader.SeasonSummary
 export type Settings = main.Settings
 export type Environment = main.Environment

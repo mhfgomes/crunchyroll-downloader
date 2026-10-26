@@ -538,3 +538,8 @@ func (a *App) Reveal(path string) error {
 func (a *App) OpenURL(url string) {
 	runtime.BrowserOpenURL(a.ctx, url)
 }
+
+// Search finds series by title.
+func (a *App) Search(query string) ([]downloader.SearchResult, error) {
+	return downloader.Search(query)
+}

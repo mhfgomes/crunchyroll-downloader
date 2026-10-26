@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { CheckIcon, ClipboardPasteIcon, Loader2Icon, SearchIcon } from "lucide-react"
+import { ArrowLeftIcon, CheckIcon, Loader2Icon, SearchIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -13,13 +13,18 @@ import {
   episodeCode,
   errorMessage,
   type LookupResult,
+  type SearchResult,
   type Title,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-export function BrowseView({ onQueued }: { onQueued: () => void }) {
+const isLink = (s: string) => /crunchyroll\.com\/|\/(watch|series)\//i.test(s)
+
+export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void; onOpenSettings: () => void }) {
   const { env } = useBackend()
   const [url, setUrl] = useState("")
+  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null)
+  const [searching, setSearching] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [result, setResult] = useState<LookupResult | null>(null)
@@ -51,14 +56,44 @@ export function BrowseView({ onQueued }: { onQueued: () => void }) {
     }
   }
 
-  async function paste() {
-    try {
-      const text = await navigator.clipboard.readText()
-      setUrl(text)
-      void lookup(text)
-    } catch {
-      toast.error("Couldn't read the clipboard. Paste the link with Ctrl+V instead.")
+  const query = url.trim()
+  const loggedIn = !!env?.loggedIn
+
+  // Search titles as the user types; links are looked up directly instead.
+  useEffect(() => {
+    if (!loggedIn || query.length < 2 || isLink(query)) {
+      setSearching(false)
+      return
     }
+    let stale = false
+    setSearching(true)
+    const timer = setTimeout(() => {
+      api
+        .Search(query)
+        .then((res) => {
+          if (stale) return
+          setSearchResults(res ?? [])
+          setResult(null)
+          setError("")
+        })
+        .catch((err) => !stale && setError(errorMessage(err)))
+        .finally(() => !stale && setSearching(false))
+    }, 300)
+    return () => {
+      stale = true
+      clearTimeout(timer)
+    }
+  }, [query, loggedIn])
+
+  function openSeries(r: SearchResult) {
+    void lookup(`https://www.crunchyroll.com/series/${r.id}`)
+  }
+
+  function clear() {
+    setUrl("")
+    setSearchResults(null)
+    setResult(null)
+    setError("")
   }
 
   useEffect(() => {
@@ -118,53 +153,75 @@ export function BrowseView({ onQueued }: { onQueued: () => void }) {
     onQueued()
   }
 
-  const blocked = env && !env.loggedIn
+  const blocked = !loggedIn
 
   return (
     <div className="flex h-full flex-col">
       <form
-        className="flex items-center gap-2 border-b px-8 py-5"
+        className="border-b px-8 py-5"
         onSubmit={(e) => {
           e.preventDefault()
-          void lookup()
+          if (isLink(query)) void lookup()
+          else if (searchResults?.length) openSeries(searchResults[0])
         }}
       >
-        <div className="relative flex-1">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+        <div className="relative">
+          {searching || loading ? (
+            <Loader2Icon className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+          ) : (
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          )}
           <Input
+            type="search"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="Paste a crunchyroll.com/series/… or /watch/… link"
-            className="h-10 pl-9 text-sm"
+            placeholder={loggedIn ? "Search Crunchyroll, or paste a series or episode link" : "Sign in to search Crunchyroll"}
+            className="h-11 rounded-full pr-10 pl-10 text-[15px] [&::-webkit-search-cancel-button]:hidden"
+            disabled={!loggedIn}
             autoFocus
           />
+          {url && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={clear}
+              className="absolute top-1/2 right-2.5 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <XIcon className="size-3.5" />
+            </button>
+          )}
         </div>
-        <Button type="button" variant="outline" size="lg" className="h-10" onClick={() => void paste()}>
-          <ClipboardPasteIcon />
-          Paste
-        </Button>
-        <Button type="submit" size="lg" className="h-10 px-4" disabled={loading || !url.trim() || !!blocked}>
-          {loading && <Loader2Icon className="animate-spin" />}
-          Look up
-        </Button>
+        {env && !env.loggedIn && (
+          <p className="mt-3 flex items-center gap-2 pl-4 text-sm text-muted-foreground">
+            <span className="size-1.5 rounded-full bg-destructive" />
+            {env.loginError}
+            <Button variant="link" size="sm" className="h-auto px-0" onClick={onOpenSettings}>
+              Add your cookie in Settings
+            </Button>
+          </p>
+        )}
       </form>
-
-      {blocked && (
-        <p className="border-b bg-destructive/10 px-8 py-2.5 text-sm text-destructive">
-          {env.loginError} Add it in Settings to look up episodes.
-        </p>
-      )}
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-8 pt-7 pb-28">
           {error && <p className="mb-6 text-sm text-destructive selectable">{error}</p>}
 
-          {!result && !loading && !error && <Intro />}
+          {!result && !loading && searchResults === null && !error && <Intro />}
+
+          {!result && !loading && searchResults !== null && (
+            <SearchResults results={searchResults} query={query} onOpen={openSeries} />
+          )}
 
           {loading && <GridSkeleton />}
 
           {result && (
             <>
+              {searchResults !== null && (
+                <Button variant="ghost" size="sm" className="-ml-2 mb-3" onClick={() => setResult(null)}>
+                  <ArrowLeftIcon />
+                  Search results
+                </Button>
+              )}
               <h1 className="font-heading text-4xl leading-none font-bold tracking-tight">
                 {seriesTitle || <Skeleton className="h-9 w-72" />}
               </h1>
@@ -282,6 +339,32 @@ function EpisodeTile({ title, selected, onToggle }: { title: Title; selected: bo
   )
 }
 
+function SearchResults({ results, query, onOpen }: { results: SearchResult[]; query: string; onOpen: (r: SearchResult) => void }) {
+  if (results.length === 0) {
+    return (
+      <p className="pt-10 text-sm text-muted-foreground">
+        No series match “{query}”. Try the original or English title, or paste a link.
+      </p>
+    )
+  }
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-5 gap-y-7">
+      {results.map((r) => (
+        <button key={r.id} onClick={() => onOpen(r)} className="group text-left outline-none">
+          <div className="aspect-[2/3] overflow-hidden rounded-md bg-muted ring-2 ring-transparent transition-shadow group-hover:ring-select/60 group-focus-visible:ring-ring">
+            {r.poster && <img src={r.poster} alt="" loading="lazy" className="size-full object-cover" />}
+          </div>
+          <div className="mt-2.5 line-clamp-2 text-sm leading-snug font-medium">{r.title}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {r.episodeCount > 0 && `${r.episodeCount} episodes`}
+            {r.seasonCount > 1 && `, ${r.seasonCount} seasons`}
+          </div>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function GridSkeleton() {
   return (
     <div className="mt-8 grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-x-5 gap-y-7">
@@ -303,7 +386,7 @@ function Intro() {
         What are we watching tonight?
       </h1>
       <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-        Paste a series link to pick episodes from any season, or an episode link to grab just that one.
+        Search for a series to pick episodes from any season, or paste an episode link to grab just that one.
         Files are saved as MKV with every audio and subtitle track you chose in Settings.
       </p>
     </div>

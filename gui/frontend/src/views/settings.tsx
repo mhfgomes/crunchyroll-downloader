@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { LangPicker } from "@/components/lang-picker"
+import { NumberStepper } from "@/components/number-stepper"
 import { useBackend } from "@/hooks/use-backend"
 import { api, errorMessage, NS_PER_SECOND, type Settings } from "@/lib/api"
 
@@ -179,22 +180,22 @@ export function SettingsView() {
 
           <Section title="Rate limits" description="Crunchyroll limits how many streams an account can open, and how quickly.">
             <Row label="Simultaneous streams" hint="Keep this within your plan's stream limit.">
-              <Input
-                type="number"
+              <NumberStepper
+                label="simultaneous streams"
+                value={o.simultaneous}
                 min={1}
                 max={10}
-                className="w-24"
-                value={o.simultaneous}
-                onChange={(e) => setOpt({ simultaneous: Math.max(1, Number(e.target.value) || 1) })}
+                onChange={(v) => setOpt({ simultaneous: v })}
               />
             </Row>
-            <Row label="Pause between episodes" hint="Seconds to wait before starting the next episode.">
-              <Input
-                type="number"
-                min={0}
-                className="w-24"
+            <Row label="Pause between episodes" hint="How long to wait before starting the next episode.">
+              <NumberStepper
+                label="pause between episodes"
                 value={Math.round(o.downloadDelay / NS_PER_SECOND)}
-                onChange={(e) => setOpt({ downloadDelay: Math.max(0, Number(e.target.value) || 0) * NS_PER_SECOND })}
+                min={0}
+                max={3600}
+                suffix="seconds"
+                onChange={(v) => setOpt({ downloadDelay: v * NS_PER_SECOND })}
               />
             </Row>
             <Row label="Log raw manifests" hint="Writes playback JSON and manifest XML to Logs, for bug reports.">

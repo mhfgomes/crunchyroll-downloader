@@ -146,6 +146,28 @@ export namespace downloader {
 	        this.widevinePath = source["widevinePath"];
 	    }
 	}
+	export class SearchResult {
+	    id: string;
+	    title: string;
+	    description: string;
+	    poster: string;
+	    seasonCount: number;
+	    episodeCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.description = source["description"];
+	        this.poster = source["poster"];
+	        this.seasonCount = source["seasonCount"];
+	        this.episodeCount = source["episodeCount"];
+	    }
+	}
 	
 
 }

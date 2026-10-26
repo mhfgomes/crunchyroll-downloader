@@ -68,7 +68,7 @@ export function App() {
           </aside>
           <main className="relative min-w-0 flex-1">
             {view === "browse" && (
-              <BrowseView onQueued={() => setView("queue")} />
+              <BrowseView onQueued={() => setView("queue")} onOpenSettings={() => setView("settings")} />
             )}
             {view === "queue" && <QueueView onBrowse={() => setView("browse")} />}
             {view === "settings" && <SettingsView />}

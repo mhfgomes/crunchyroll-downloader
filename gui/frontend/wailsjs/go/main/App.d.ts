@@ -39,4 +39,6 @@ export function Reveal(arg1:string):Promise<void>;
 
 export function SaveSettings(arg1:main.Settings):Promise<main.Environment>;
 
+export function Search(arg1:string):Promise<Array<downloader.SearchResult>>;
+
 export function SeasonEpisodes(arg1:string):Promise<Array<downloader.Title>>;
