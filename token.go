@@ -46,7 +46,7 @@ func GetAccessToken(etpRt string) (string, error) {
 	req.AddCookie(&http.Cookie{Name: "device_id", Value: deviceId})
 	req.AddCookie(&http.Cookie{Name: "etp_rt", Value: etpRt})
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to get access token: %w", err)
 	}

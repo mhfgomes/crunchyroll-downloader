@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/iyear/gowidevine"
 	"github.com/unki2aut/go-mpd"
@@ -166,13 +167,13 @@ func onDemandRequest(url, byteRange string) (*http.Response, error) {
 	req.Header.Set("Origin", "https://static.crunchyroll.com")
 	req.Header.Set("Referer", "https://static.crunchyroll.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return nil, fmt.Errorf("media server %s refused range %s: HTTP %d", req.URL.Host, byteRange, resp.StatusCode)
 	}
 	return resp, nil
 }
@@ -228,30 +229,70 @@ func (c *countingReader) Read(p []byte) (int, error) {
 // streamRange downloads the resource from start to EOF, reporting absolute
 // progress as (current, total) bytes through onProgress when the total is known.
 func streamRange(w io.Writer, url string, start int64, onProgress func(current, total int64)) error {
-	resp, err := onDemandRequest(url, fmt.Sprintf("bytes=%d-", start))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	total, base, known := responseRange(resp)
-	if !known {
-		_, err = io.Copy(w, resp.Body)
-		return err
-	}
-
-	var done int64
-	reader := &countingReader{
-		r: resp.Body,
-		onRead: func(n int) {
-			done += int64(n)
-			if onProgress != nil {
-				onProgress(base+done, total)
+	offset := start
+	var total int64
+	const chunkSize = int64(8 * 1024 * 1024)
+	const attempts = 5
+	failures := 0
+	for {
+		if failures > 0 {
+			time.Sleep(time.Duration(failures) * 250 * time.Millisecond)
+			fmt.Printf("Resuming media at byte %d (attempt %d/%d)...\n", offset, failures+1, attempts)
+		}
+		end := offset + chunkSize - 1
+		if total > 0 {
+			end = min(end, total-1)
+		}
+		resp, err := onDemandRequest(url, fmt.Sprintf("bytes=%d-%d", offset, end))
+		if err == nil {
+			responseTotal, base, known := responseRange(resp)
+			if resp.StatusCode == http.StatusPartialContent && (!known || base != offset) {
+				resp.Body.Close()
+				return fmt.Errorf("media range starts at %d, requested %d", base, offset)
 			}
-		},
+			if known {
+				if total != 0 && responseTotal != total {
+					resp.Body.Close()
+					return fmt.Errorf("media size changed during download")
+				}
+				total = responseTotal
+				end = min(end, total-1)
+			}
+			// Handle peers that ignore Range without duplicating a saved prefix.
+			if resp.StatusCode == http.StatusOK && offset > 0 {
+				_, err = io.CopyN(io.Discard, resp.Body, offset)
+			}
+			if err == nil {
+				reader := &countingReader{r: resp.Body, onRead: func(n int) {
+					offset += int64(n)
+					if onProgress != nil && known {
+						onProgress(offset, total)
+					}
+				}}
+				if known {
+					if total < offset {
+						resp.Body.Close()
+						return fmt.Errorf("invalid media size %d at offset %d", total, offset)
+					}
+					_, err = io.CopyN(w, reader, end-offset+1)
+				} else {
+					_, err = io.Copy(w, reader)
+				}
+			}
+			resp.Body.Close()
+			if err == nil {
+				if !known || offset == total {
+					return nil
+				}
+				failures = 0
+				continue
+			}
+		}
+		failures++
+		if !isRetryableReadError(err) || failures == attempts {
+			return fmt.Errorf("downloading media at byte %d: %w", offset, err)
+		}
 	}
-	_, err = io.Copy(w, reader)
-	return err
 }
 
 func tempMediaFile(isVideo bool) string {

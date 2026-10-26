@@ -18,6 +18,8 @@ You won't be banned or anything, I downloaded all Kaguya-Sama seasons to test du
 - Adds metadata (like episode name) to the MKV container
 - Parallel segment downloads (10 workers) for faster downloads
 - Retry with backoff on connection errors
+- Uses HTTP/1.1 to avoid HTTP/2 stream resets; interrupted subtitle and manifest downloads are retried up to three attempts
+- Single-file media uses bounded 8 MiB ranges and resumes interrupted reads, allowing up to five consecutive attempts
 - Batch download from a list of URLs
 
 ## Requirements

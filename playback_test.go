@@ -16,9 +16,9 @@ func (f playbackTransport) RoundTrip(r *http.Request) (*http.Response, error) { 
 
 func mockPlayback(t *testing.T, handler playbackTransport) {
 	t.Helper()
-	old := http.DefaultTransport
-	http.DefaultTransport = handler
-	t.Cleanup(func() { http.DefaultTransport = old })
+	old := httpClient
+	httpClient = &http.Client{Transport: handler}
+	t.Cleanup(func() { httpClient = old })
 }
 
 func playbackResponse(r *http.Request, status int, body string) *http.Response {

@@ -83,7 +83,7 @@ func getEpisode(id string) (Episode, error) {
 	var episode Episode
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return Episode{}, err
+		return Episode{}, fmt.Errorf("reading playback response for %s: %w", id, err)
 	}
 	if err = json.Unmarshal(body, &episode); err != nil {
 		return Episode{}, err

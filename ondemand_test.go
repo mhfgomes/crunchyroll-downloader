@@ -1,9 +1,99 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 )
+
+type eofReader struct{}
+
+func (eofReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+func TestStreamRangeResumesWithoutDuplicateBytes(t *testing.T) {
+	for _, ignoreRange := range []bool{false, true} {
+		t.Run(fmt.Sprint(ignoreRange), func(t *testing.T) {
+			const payload = "0123456789abcdef"
+			calls := 0
+			mockPlayback(t, func(r *http.Request) (*http.Response, error) {
+				calls++
+				if calls == 1 {
+					if r.Header.Get("Range") != "bytes=2-8388609" {
+						t.Errorf("initial Range=%q", r.Header.Get("Range"))
+					}
+					resp := playbackResponse(r, 206, "")
+					resp.Header.Set("Content-Range", "bytes 2-15/16")
+					resp.Body = io.NopCloser(io.MultiReader(strings.NewReader(payload[2:6]), eofReader{}))
+					return resp, nil
+				}
+				if r.Header.Get("Range") != "bytes=6-15" {
+					t.Errorf("resume Range=%q", r.Header.Get("Range"))
+				}
+				if ignoreRange {
+					resp := playbackResponse(r, 200, payload)
+					resp.ContentLength = int64(len(payload))
+					return resp, nil
+				}
+				resp := playbackResponse(r, 206, payload[6:])
+				resp.Header.Set("Content-Range", "bytes 6-15/16")
+				return resp, nil
+			})
+			var output bytes.Buffer
+			if err := streamRange(&output, "https://cdn.example/media", 2, nil); err != nil {
+				t.Fatal(err)
+			}
+			if output.String() != payload[2:] || calls != 2 {
+				t.Fatalf("output=%q calls=%d", output.String(), calls)
+			}
+		})
+	}
+}
+
+func TestStreamRangeUsesBoundedChunks(t *testing.T) {
+	payload := bytes.Repeat([]byte("m"), 8*1024*1024+17)
+	calls := 0
+	mockPlayback(t, func(r *http.Request) (*http.Response, error) {
+		calls++
+		var start, end int
+		if _, err := fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end); err != nil {
+			t.Fatal(err)
+		}
+		if end-start+1 > 8*1024*1024 {
+			t.Fatalf("unbounded range %q", r.Header.Get("Range"))
+		}
+		end = min(end, len(payload)-1)
+		resp := playbackResponse(r, 206, "")
+		resp.Body = io.NopCloser(bytes.NewReader(payload[start : end+1]))
+		resp.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(payload)))
+		return resp, nil
+	})
+	var result bytes.Buffer
+	var last int64
+	err := streamRange(&result, "https://cdn.example/media", 3, func(current, total int64) {
+		if current < last || total != int64(len(payload)) {
+			t.Errorf("invalid progress %d/%d after %d", current, total, last)
+		}
+		last = current
+	})
+	if err != nil || calls != 2 || !bytes.Equal(result.Bytes(), payload[3:]) {
+		t.Fatalf("calls=%d bytes=%d err=%v", calls, result.Len(), err)
+	}
+}
+
+func TestStreamRangeRejectsWrongOffset(t *testing.T) {
+	mockPlayback(t, func(r *http.Request) (*http.Response, error) {
+		resp := playbackResponse(r, 206, "wrong bytes")
+		resp.Header.Set("Content-Range", "bytes 0-9/10")
+		return resp, nil
+	})
+	var result bytes.Buffer
+	if err := streamRange(&result, "https://cdn.example/media", 5, nil); err == nil || result.Len() != 0 {
+		t.Fatalf("invalid range accepted, bytes=%d err=%v", result.Len(), err)
+	}
+}
 
 func TestParseByteRange(t *testing.T) {
 	tests := []struct {

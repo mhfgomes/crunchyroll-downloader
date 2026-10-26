@@ -41,11 +41,12 @@ type byteSample struct {
 // progressBar tracks the completion of a single download and renders one line
 // of the progress display.
 type progressBar struct {
-	title   string // what is being downloaded, e.g. "video" or "audio 日本語"
-	label   string // unit shown after the count, e.g. "segments"
-	total   int64
-	current int64
-	samples []byteSample // recent (time, bytes) observations for the rate
+	title      string // what is being downloaded, e.g. "video" or "audio 日本語"
+	label      string // unit shown after the count, e.g. "segments"
+	total      int64
+	current    int64
+	samples    []byteSample // recent (time, bytes) observations for the rate
+	lastRender time.Time
 }
 
 // newProgressBar registers a bar for a download. Callers that do not know the
@@ -87,6 +88,11 @@ func (b *progressBar) update(current, bytes int64) {
 	}
 	b.current = current
 	b.recordBytes(bytes)
+	now := time.Now()
+	if now.Sub(b.lastRender) < 100*time.Millisecond && (b.total <= 0 || current < b.total) {
+		return
+	}
+	b.lastRender = now
 	renderLocked()
 }
 

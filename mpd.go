@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,18 +19,14 @@ func parseManifest(url string) (*mpd.MPD, []byte, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0")
-	resp, err := http.DefaultClient.Do(req)
+	body, err := readGET(req)
 	if err != nil {
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("fetching manifest: %w", err)
 	}
 	mpd := new(mpd.MPD)
-	mpd.Decode(body)
+	if err := mpd.Decode(body); err != nil {
+		return nil, nil, fmt.Errorf("decoding manifest XML: %w", err)
+	}
 
 	if *debug {
 		fmt.Printf("\n%s\n", string(body))
