@@ -189,13 +189,10 @@ export function SettingsView() {
               />
             </Row>
             <Row label="Pause between episodes" hint="How long to wait before starting the next episode.">
-              <NumberStepper
+              <DurationField
                 label="pause between episodes"
-                value={Math.round(o.downloadDelay / NS_PER_SECOND)}
-                min={0}
-                max={3600}
-                suffix="seconds"
-                onChange={(v) => setOpt({ downloadDelay: v * NS_PER_SECOND })}
+                seconds={Math.round(o.downloadDelay / NS_PER_SECOND)}
+                onChange={(secs) => setOpt({ downloadDelay: secs * NS_PER_SECOND })}
               />
             </Row>
             <Row label="Log raw manifests" hint="Writes playback JSON and manifest XML to Logs, for bug reports.">
@@ -271,6 +268,54 @@ function PathInput({
           <FolderIcon /> Folder…
         </Button>
       )}
+    </div>
+  )
+}
+
+const UNITS = [
+  { value: "s", label: "seconds", seconds: 1 },
+  { value: "m", label: "minutes", seconds: 60 },
+  { value: "h", label: "hours", seconds: 3600 },
+]
+
+/** Edits a duration in seconds as an amount plus a unit. */
+function DurationField({ label, seconds, onChange }: { label: string; seconds: number; onChange: (s: number) => void }) {
+  // Start on the largest unit that represents the saved value exactly.
+  const [unit, setUnit] = useState(
+    () => [...UNITS].reverse().find((u) => seconds > 0 && seconds % u.seconds === 0) ?? UNITS[0]
+  )
+  const amount = Math.round(seconds / unit.seconds)
+
+  return (
+    <div className="flex items-center gap-2">
+      <NumberStepper
+        label={label}
+        value={amount}
+        min={0}
+        max={unit.value === "s" ? 3600 : unit.value === "m" ? 600 : 24}
+        onChange={(v) => onChange(v * unit.seconds)}
+      />
+      <Select
+        value={unit.value}
+        items={UNITS}
+        onValueChange={(v) => {
+          const next = UNITS.find((u) => u.value === v)
+          if (!next) return
+          setUnit(next)
+          onChange(amount * next.seconds)
+        }}
+      >
+        <SelectTrigger className="w-28" aria-label={`${label} unit`}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {UNITS.map((u) => (
+            <SelectItem key={u.value} value={u.value}>
+              {u.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   )
 }
