@@ -67,17 +67,20 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
     }
     let stale = false
     setSearching(true)
-    const timer = setTimeout(() => {
-      api
-        .Search(query)
-        .then((res) => {
-          if (stale) return
-          setSearchResults(res ?? [])
-          setResult(null)
-          setError("")
-        })
-        .catch((err) => !stale && setError(errorMessage(err)))
-        .finally(() => !stale && setSearching(false))
+    const timer = setTimeout(async () => {
+      // Awaited inside try so a synchronous throw from the bridge (e.g. a
+      // stale dev build missing the binding) still clears the spinner.
+      try {
+        const res = await api.Search(query)
+        if (stale) return
+        setSearchResults(res ?? [])
+        setResult(null)
+        setError("")
+      } catch (err) {
+        if (!stale) setError(`Search failed: ${errorMessage(err)}`)
+      } finally {
+        if (!stale) setSearching(false)
+      }
     }, 300)
     return () => {
       stale = true
