@@ -174,7 +174,7 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
       seasons ??= (await api.Lookup(seriesLink(seriesId))).seasons ?? []
       const lists = await Promise.all(seasons.map((s) => api.SeasonEpisodes(s.id)))
       toast.dismiss(id)
-      await queue(lists.flat().filter(Boolean))
+      await queue(lists.flat().filter((t): t is Title => !!t))
     } catch (err) {
       toast.error(errorMessage(err), { id })
     }

@@ -93,9 +93,9 @@ function JobRow({ job }: { job: Job }) {
           <p className="mt-1 line-clamp-3 text-xs text-destructive/90 selectable">{job.error}</p>
         )}
 
-        {running && job.tracks.length > 0 && (
+        {running && (job.tracks?.length ?? 0) > 0 && (
           <div className="mt-3 flex flex-col gap-2.5">
-            {job.tracks.map((tr) => (
+            {(job.tracks ?? []).map((tr) => (
               <TrackBar key={tr.id} track={tr} />
             ))}
           </div>

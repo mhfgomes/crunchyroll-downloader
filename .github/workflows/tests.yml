@@ -102,8 +102,8 @@ jobs:
           node-version: 22
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
 
       - name: Build
         working-directory: gui
-        run: wails build
+        run: wails3 build

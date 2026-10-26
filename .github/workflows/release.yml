@@ -70,15 +70,18 @@ jobs:
           node-version: 22
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
 
       - name: Build
         working-directory: gui
-        run: wails build -trimpath -ldflags "-s -w" -o crdl-gui-windows.exe
+        shell: bash
+        run: |
+          wails3 build
+          mv bin/crdl-gui.exe bin/crdl-gui-windows.exe
 
       - name: Upload to release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$TAG" gui/build/bin/crdl-gui-windows.exe --clobber
+        run: gh release upload "$TAG" gui/bin/crdl-gui-windows.exe --clobber

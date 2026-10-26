@@ -1,4 +1,7 @@
-build/bin
+bin
+.task
 node_modules
 frontend/dist/*
 !frontend/dist/.gitkeep
+build/linux/appimage/build
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe

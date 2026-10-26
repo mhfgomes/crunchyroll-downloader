@@ -15,7 +15,7 @@ import (
 
 	"crunchyroll-downloader/downloader"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // Settings is everything the GUI persists between launches.
@@ -102,7 +102,8 @@ func NewApp() *App {
 	return &App{wake: make(chan struct{}, 1)}
 }
 
-func (a *App) startup(ctx context.Context) {
+// ServiceStartup runs when the Wails application starts.
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	a.ctx = ctx
 	a.settings = loadSettings()
 	if err := downloader.Configure(a.settings.Options); err != nil {
@@ -115,6 +116,7 @@ func (a *App) startup(ctx context.Context) {
 		Episode:  a.onEpisode,
 	})
 	go a.worker()
+	return nil
 }
 
 func settingsPath() (string, error) {
@@ -425,7 +427,7 @@ func (a *App) onLog(line string) {
 		a.logs = a.logs[len(a.logs)-2000:]
 	}
 	a.mu.Unlock()
-	runtime.EventsEmit(a.ctx, "log", l)
+	application.Get().Event.Emit("log", l)
 }
 
 func (a *App) onProgress(ev downloader.ProgressEvent) {
@@ -492,21 +494,30 @@ func (a *App) emitQueue(force bool) {
 		return
 	}
 	a.lastEmit = time.Now()
-	runtime.EventsEmit(a.ctx, "queue", a.snapshotLocked())
+	application.Get().Event.Emit("queue", a.snapshotLocked())
 }
 
 // PickDirectory opens a folder picker, returning "" when cancelled.
 func (a *App) PickDirectory(title, current string) (string, error) {
-	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: title, DefaultDirectory: existingDir(current)})
+	return application.Get().Dialog.OpenFile().
+		SetTitle(title).
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		CanCreateDirectories(true).
+		SetDirectory(existingDir(current)).
+		PromptForSingleSelection()
 }
 
 // PickFile opens a file picker, returning "" when cancelled.
 func (a *App) PickFile(title, current, pattern string) (string, error) {
-	opts := runtime.OpenDialogOptions{Title: title, DefaultDirectory: existingDir(filepath.Dir(current))}
+	d := application.Get().Dialog.OpenFile().
+		SetTitle(title).
+		CanChooseFiles(true).
+		SetDirectory(existingDir(filepath.Dir(current)))
 	if pattern != "" {
-		opts.Filters = []runtime.FileFilter{{DisplayName: pattern, Pattern: pattern}}
+		d.AddFilter(pattern, pattern)
 	}
-	return runtime.OpenFileDialog(a.ctx, opts)
+	return d.PromptForSingleSelection()
 }
 
 func existingDir(dir string) string {
@@ -535,8 +546,8 @@ func (a *App) Reveal(path string) error {
 }
 
 // OpenURL opens a link in the default browser.
-func (a *App) OpenURL(url string) {
-	runtime.BrowserOpenURL(a.ctx, url)
+func (a *App) OpenURL(url string) error {
+	return application.Get().Browser.OpenURL(url)
 }
 
 // Search finds series by title.

@@ -1,6 +1,8 @@
-import * as App from "../../wailsjs/go/main/App"
-import { EventsOn } from "../../wailsjs/runtime/runtime"
-import type { downloader, main } from "../../wailsjs/go/models"
+import { Events } from "@wailsio/runtime"
+
+import { App } from "../../bindings/crunchyroll-downloader-gui"
+import type * as main from "../../bindings/crunchyroll-downloader-gui/models"
+import type * as downloader from "../../bindings/crunchyroll-downloader/downloader/models"
 
 export type Title = downloader.Title
 export type Options = downloader.Options
@@ -29,11 +31,11 @@ export type Job = Omit<main.Job, "status" | "retryAt"> & {
 export const api = App
 
 export function onQueue(cb: (jobs: Job[]) => void) {
-  return EventsOn("queue", cb)
+  return Events.On("queue", (ev) => cb(ev.data as Job[]))
 }
 
 export function onLog(cb: (line: LogLine) => void) {
-  return EventsOn("log", cb)
+  return Events.On("log", (ev) => cb(ev.data as LogLine))
 }
 
 // Go's time.Duration crosses the bridge as nanoseconds.
@@ -51,6 +53,6 @@ export function episodeCode(t: Pick<Title, "season" | "number">) {
 }
 
 export function audioLocales(t: Title): string[] {
-  const locales = (t.versions ?? []).map((v) => v.audio_locale).filter(Boolean)
+  const locales = (t.versions ?? []).map((v) => v?.audio_locale ?? "").filter(Boolean)
   return locales.length ? locales : t.audioLocale ? [t.audioLocale] : []
 }
