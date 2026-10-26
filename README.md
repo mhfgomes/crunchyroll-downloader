@@ -52,6 +52,8 @@ Usage of ./crunchyroll-downloader:
         Path to a text file with one URL per line
   -season int
         Season number. Not used if an episode link is entered
+  -simultaneous int
+        Maximum simultaneous playback sessions for audio and subtitle downloads; keep within your account's available stream slots (default 1)
   -subs-lang string
         Subtitle language(s), comma-separated (e.g. "fr-FR,ALL"). Add ALL for every available subtitle; explicit languages lead, the first available track is default, and ALL alone prefers en-US (default "en-US")
   -url string
@@ -84,6 +86,13 @@ Add `ALL` to any language list to include every available language; listed langu
 ```shell
 ./crunchyroll-downloader --url https://www.crunchyroll.com/watch/GE00198973JAJP/dawn-and-confusion --etp-rt replace_this --audio-lang ja-JP,ALL --subs-lang fr-FR,ALL --cc-lang ALL
 ```
+
+Each dub opens a separate playback session, which counts toward your account's simultaneous stream limit. Downloads use one session at a time by default. Set `--simultaneous` to increase this, leaving room for anyone watching on the same account. For example, when all four Mega Fan stream slots are free:
+```shell
+./crunchyroll-downloader --url https://www.crunchyroll.com/series/GRDV0019R/jujutsu-kaisen --etp-rt replace_this --audio-lang ALL --subs-lang ALL --simultaneous 4 --download-delay 15s
+```
+
+The cap also applies to extra dub sessions needed by `--subs-lang ALL` or `--cc-lang ALL`. Each session is released after its tracks finish, before the worker opens another. Video and audio from the same dub share one session; segment downloads remain parallel. `--download-delay` controls the gap between episodes and does not control simultaneous playback sessions. If you see `TOO_MANY_ACTIVE_STREAMS`, lower `--simultaneous` and close other playback sessions.
 
 If you're getting rate-limited while downloading a season/batch, wait at least this long between each episode:
 ```shell

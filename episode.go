@@ -14,6 +14,9 @@ import (
 // any other playback failure and moving on.
 var ErrRateLimited = errors.New("rate limited by Crunchyroll")
 
+var ErrActiveStreams = errors.New("Crunchyroll's active stream limit was reached; lower -simultaneous or close other playback sessions")
+var errPlaybackOpen = errors.New("could not open playback")
+
 // EpisodeError is the playback endpoint's polymorphic "error" field. It is a
 // string message on failure, but Crunchyroll also returns false, null or a bare
 // number when playback is fine, which a plain *string cannot unmarshal.
@@ -91,6 +94,9 @@ func getEpisode(id string) (Episode, error) {
 			fmt.Printf(" (%s)", episode.Reason)
 		}
 		fmt.Println()
+		if episode.Error == "TOO_MANY_ACTIVE_STREAMS" {
+			return Episode{}, fmt.Errorf("playback error: %s: %w", episode.Error, ErrActiveStreams)
+		}
 		if strings.HasPrefix(string(episode.Error), "429") {
 			fmt.Println("Crunchyroll is rate-limiting this account. Wait a while before retrying, or use a different account.")
 			return Episode{}, fmt.Errorf("playback error: %s: %w", episode.Error, ErrRateLimited)
@@ -175,4 +181,21 @@ func deleteStream(contentId, sToken string) error {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// withPlaybackSession keeps one playback open until all of its tracks have
+// finished. A worker must wait for this to return before opening its next dub.
+// A release failure stops the episode rather than accumulating more sessions.
+func withPlaybackSession(contentID string, consume func(Episode) error) (err error) {
+	episode, err := getEpisode(contentID)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errPlaybackOpen, err)
+	}
+	defer func() {
+		if releaseErr := deleteStream(contentID, episode.Token); releaseErr != nil {
+			err = errors.Join(err, fmt.Errorf("releasing playback for %s: %w", contentID, releaseErr))
+			fmt.Printf("Failed to remove the player stream for %s: %v\n", contentID, releaseErr)
+		}
+	}()
+	return consume(episode)
 }
