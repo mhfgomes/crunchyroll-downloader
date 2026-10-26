@@ -1,4 +1,4 @@
-package main
+package downloader
 
 import (
 	"fmt"
@@ -28,8 +28,8 @@ func parseManifest(url string) (*mpd.MPD, []byte, error) {
 		return nil, nil, fmt.Errorf("decoding manifest XML: %w", err)
 	}
 
-	if *debug {
-		fmt.Printf("\n%s\n", string(body))
+	if debug {
+		logf("\n%s\n", string(body))
 	}
 
 	return mpd, body, nil
@@ -65,7 +65,7 @@ func getBaseUrl(set *mpd.AdaptationSet, isVideoSet bool, quality string) (*strin
 		return nil, nil
 	}
 	firstRep := set.Representations[0]
-	fmt.Printf("Audio quality %s not found, deferring to %s\n", quality, *firstRep.ID)
+	logf("Audio quality %s not found, deferring to %s\n", quality, *firstRep.ID)
 	return &firstRep.BaseURL[0].Value, firstRep.ID
 }
 

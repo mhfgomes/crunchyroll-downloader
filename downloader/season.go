@@ -1,4 +1,4 @@
-package main
+package downloader
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-type SeasonEpisodes struct {
+type seasonEpisodesResponse struct {
 	Data []SeasonEpisode `json:"data"`
 }
 
@@ -20,6 +20,7 @@ type SeasonEpisode struct {
 	AudioLocale        string        `json:"audio_locale"`
 	Title              string        `json:"title"`
 	AvailabilityStarts string        `json:"availability_starts"`
+	Images             Images        `json:"images"`
 }
 
 func getSeasonEpisodes(contentId string, audio_locale string, sub_locale string) []SeasonEpisode {
@@ -42,7 +43,7 @@ func getSeasonEpisodes(contentId string, audio_locale string, sub_locale string)
 		panic(err)
 	}
 	defer resp.Body.Close()
-	var episodes SeasonEpisodes
+	var episodes seasonEpisodesResponse
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
@@ -59,9 +60,43 @@ type Seasons struct {
 }
 
 type Season struct {
-	ID           string `json:"id"`
-	SeasonNumber int    `json:"season_number"`
+	ID               string   `json:"id"`
+	SeasonNumber     int      `json:"season_number"`
+	Title            string   `json:"title"`
+	SeriesTitle      string   `json:"series_title"`
+	NumberOfEpisodes int      `json:"number_of_episodes"`
+	AudioLocales     []string `json:"audio_locales"`
 }
+
+// Images holds the artwork variants Crunchyroll returns for a content object,
+// each a list of sizes.
+type Images struct {
+	Thumbnail  [][]Image `json:"thumbnail"`
+	PosterTall [][]Image `json:"poster_tall"`
+	PosterWide [][]Image `json:"poster_wide"`
+}
+
+type Image struct {
+	Source string `json:"source"`
+	Width  int    `json:"width"`
+}
+
+// pickImage returns the smallest variant at least minWidth wide, or the
+// largest when none is.
+func pickImage(sets [][]Image, minWidth int) string {
+	if len(sets) == 0 || len(sets[0]) == 0 {
+		return ""
+	}
+	best := sets[0][0]
+	for _, img := range sets[0] {
+		if (best.Width < minWidth && img.Width > best.Width) || (img.Width >= minWidth && img.Width < best.Width) {
+			best = img
+		}
+	}
+	return best.Source
+}
+
+func (i Images) thumbnail() string { return pickImage(i.Thumbnail, 480) }
 
 func getSeasons(contentId string, audioLocale string, subLocale string) []Season {
 	if audioLocale == "" {

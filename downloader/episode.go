@@ -1,4 +1,4 @@
-package main
+package downloader
 
 import (
 	"encoding/json"
@@ -89,23 +89,23 @@ func getEpisode(id string) (Episode, error) {
 		return Episode{}, err
 	}
 	if episode.Error != "" {
-		fmt.Printf("Error: %s", episode.Error)
 		if episode.Reason != "" {
-			fmt.Printf(" (%s)", episode.Reason)
+			logf("Error: %s (%s)", episode.Error, episode.Reason)
+		} else {
+			logf("Error: %s", episode.Error)
 		}
-		fmt.Println()
 		if episode.Error == "TOO_MANY_ACTIVE_STREAMS" {
 			return Episode{}, fmt.Errorf("playback error: %s: %w", episode.Error, ErrActiveStreams)
 		}
 		if strings.HasPrefix(string(episode.Error), "429") {
-			fmt.Println("Crunchyroll is rate-limiting this account. Wait a while before retrying, or use a different account.")
+			logf("Crunchyroll is rate-limiting this account. Wait a while before retrying, or use a different account.")
 			return Episode{}, fmt.Errorf("playback error: %s: %w", episode.Error, ErrRateLimited)
 		}
 		return Episode{}, fmt.Errorf("playback error: %s", episode.Error)
 	}
 
-	if *debug {
-		fmt.Printf("\n%s\n", string(body))
+	if debug {
+		logf("\n%s\n", string(body))
 	}
 
 	return episode, nil
@@ -118,7 +118,8 @@ type EpisodeMetadataResponse struct {
 type EpisodeInfo struct {
 	EpisodeMetadata EpisodeMetadata `json:"episode_metadata"`
 	// Episode title
-	Title string `json:"title"`
+	Title  string `json:"title"`
+	Images Images `json:"images"`
 }
 
 type EpisodeMetadata struct {
@@ -194,7 +195,7 @@ func withPlaybackSession(contentID string, consume func(Episode) error) (err err
 	defer func() {
 		if releaseErr := deleteStream(contentID, episode.Token); releaseErr != nil {
 			err = errors.Join(err, fmt.Errorf("releasing playback for %s: %w", contentID, releaseErr))
-			fmt.Printf("Failed to remove the player stream for %s: %v\n", contentID, releaseErr)
+			logf("Failed to remove the player stream for %s: %v\n", contentID, releaseErr)
 		}
 	}()
 	return consume(episode)

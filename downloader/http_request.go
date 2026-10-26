@@ -1,4 +1,4 @@
-package main
+package downloader
 
 import (
 	"crypto/tls"
@@ -34,7 +34,7 @@ func newHTTPClient() *http.Client {
 	}
 	transport.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	transport.MaxIdleConnsPerHost = maxWorkers * 2
-	return &http.Client{Transport: transport}
+	return &http.Client{Transport: contextTransport{transport}}
 }
 
 // readGET retries interrupted read-only downloads, including failures after
@@ -71,7 +71,7 @@ func readGET(req *http.Request) ([]byte, error) {
 		if !isRetryableReadError(err) || attempt == attempts-1 || req.Context().Err() != nil {
 			return nil, fmt.Errorf("%s %s: reading response failed: %w", req.Method, req.URL.Host, err)
 		}
-		fmt.Printf("Connection interrupted while reading %s; retrying (%d/%d)...\n", req.URL.Host, attempt+1, attempts-1)
+		logf("Connection interrupted while reading %s; retrying (%d/%d)...\n", req.URL.Host, attempt+1, attempts-1)
 	}
 	panic("unreachable")
 }
@@ -85,9 +85,9 @@ func DoRequest(req *http.Request) (*http.Response, error) {
 		return resp, err
 	}
 
-	print("Access token expired. Refetching one...\n")
+	logf("Access token expired. Refetching one...\n")
 	resp.Body.Close()
-	newToken, err := GetAccessToken(*etpRt)
+	newToken, err := GetAccessToken(etpRt)
 	if err != nil {
 		return nil, err
 	}

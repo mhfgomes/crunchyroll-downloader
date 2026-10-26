@@ -1,4 +1,4 @@
-package main
+package downloader
 
 import (
 	"fmt"
@@ -26,10 +26,23 @@ const (
 // in place as they advance. It exists so parallel video/audio downloads can both
 // report progress without clobbering each other's terminal lines.
 var progressRenderer = struct {
-	mu    sync.Mutex
-	bars  []*progressBar
-	lines int
+	mu     sync.Mutex
+	bars   []*progressBar
+	lines  int
+	nextID int64
 }{}
+
+// publishLocked sends the bar to the Progress hook when one is set, and
+// otherwise redraws the terminal. It must be called with progressRenderer.mu
+// held.
+func (b *progressBar) publishLocked(done bool) {
+	h := currentHooks().Progress
+	if h == nil {
+		renderLocked()
+		return
+	}
+	h(ProgressEvent{ID: b.id, Title: b.title, Label: b.label, Current: b.current, Total: b.total, RateMbps: b.rateMbps(), Done: done})
+}
 
 // byteSample pairs a cumulative byte count with the time it was observed, for
 // computing the download rate.
@@ -41,6 +54,7 @@ type byteSample struct {
 // progressBar tracks the completion of a single download and renders one line
 // of the progress display.
 type progressBar struct {
+	id         int64
 	title      string // what is being downloaded, e.g. "video" or "audio 日本語"
 	label      string // unit shown after the count, e.g. "segments"
 	total      int64
@@ -54,9 +68,10 @@ type progressBar struct {
 func newProgressBar(title string, total int64, label string) *progressBar {
 	progressRenderer.mu.Lock()
 	defer progressRenderer.mu.Unlock()
-	b := &progressBar{title: title, total: total, label: label}
+	progressRenderer.nextID++
+	b := &progressBar{id: progressRenderer.nextID, title: title, total: total, label: label}
 	progressRenderer.bars = append(progressRenderer.bars, b)
-	renderLocked()
+	b.publishLocked(false)
 	return b
 }
 
@@ -93,7 +108,7 @@ func (b *progressBar) update(current, bytes int64) {
 		return
 	}
 	b.lastRender = now
-	renderLocked()
+	b.publishLocked(false)
 }
 
 // finish removes the bar from the display, leaving the remaining bars redrawn.
@@ -106,7 +121,7 @@ func (b *progressBar) finish() {
 			break
 		}
 	}
-	renderLocked()
+	b.publishLocked(true)
 }
 
 // recordBytes appends a rate sample, pruning samples older than rateWindow. It

@@ -1,4 +1,4 @@
-package main
+package downloader
 
 import (
 	"bytes"
@@ -105,7 +105,7 @@ func mergeEverything(videoFile string, audioTracks, subTracks []mediaTrack, outp
 		outputFile,
 	)
 
-	cmd := exec.Command(ffmpegPath, args...)
+	cmd := exec.CommandContext(runContext(), ffmpegPath, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -122,5 +122,5 @@ func mergeEverything(videoFile string, audioTracks, subTracks []mediaTrack, outp
 		_ = os.Remove(sub.file)
 	}
 
-	fmt.Printf("\nDownload finished! Output file: %s\n\n", outputFile)
+	logf("\nDownload finished! Output file: %s\n\n", outputFile)
 }

@@ -1,7 +1,6 @@
-package main
+package downloader
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
@@ -30,7 +29,7 @@ const defaultRateLimitWait = time.Minute
 const maxRateLimitWait = 30 * time.Minute
 
 func newDownloadBackoff(delay time.Duration) *downloadBackoff {
-	return &downloadBackoff{delay: delay, now: time.Now, sleep: time.Sleep}
+	return &downloadBackoff{delay: delay, now: time.Now, sleep: sleepCtx}
 }
 
 // wait blocks until delay has elapsed since the matching done call for the
@@ -50,7 +49,7 @@ func (b *downloadBackoff) wait() {
 	b.mu.Unlock()
 
 	if remaining > 0 {
-		fmt.Printf("Waiting %s before the next download (rate-limit backoff)...\n", remaining.Round(time.Second))
+		logf("Waiting %s before the next download (rate-limit backoff)...\n", remaining.Round(time.Second))
 		b.sleep(remaining)
 	}
 }

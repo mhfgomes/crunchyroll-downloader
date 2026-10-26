@@ -1,4 +1,4 @@
-package main
+package downloader
 
 import (
 	"crypto/tls"
@@ -49,7 +49,7 @@ func TestHTTPClientUsesHTTP1WithHTTP2Peer(t *testing.T) {
 				}
 			}
 			client := newHTTPClient()
-			transport := client.Transport.(*http.Transport)
+			transport := client.Transport.(contextTransport).base.(*http.Transport)
 			// Add test trust roots without replacing the ALPN configuration.
 			transport.TLSClientConfig.RootCAs = srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
 			defer transport.CloseIdleConnections()

@@ -1,4 +1,4 @@
-package main
+package downloader
 
 import (
 	"encoding/xml"
@@ -150,7 +150,7 @@ func selectOnDemandRepresentation(set onDemandAdaptationSet, quality string, isV
 	if isVideo {
 		kind = "Video"
 	}
-	fmt.Printf("%s quality %s not found, deferring to %s\n", kind, quality, first.ID)
+	logf("%s quality %s not found, deferring to %s\n", kind, quality, first.ID)
 	return first, true
 }
 
@@ -236,8 +236,8 @@ func streamRange(w io.Writer, url string, start int64, onProgress func(current, 
 	failures := 0
 	for {
 		if failures > 0 {
-			time.Sleep(time.Duration(failures) * 250 * time.Millisecond)
-			fmt.Printf("Resuming media at byte %d (attempt %d/%d)...\n", offset, failures+1, attempts)
+			sleepCtx(time.Duration(failures) * 250 * time.Millisecond)
+			logf("Resuming media at byte %d (attempt %d/%d)...\n", offset, failures+1, attempts)
 		}
 		end := offset + chunkSize - 1
 		if total > 0 {

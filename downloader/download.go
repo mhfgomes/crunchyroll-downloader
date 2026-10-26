@@ -1,4 +1,4 @@
-package main
+package downloader
 
 import (
 	"errors"
@@ -32,7 +32,7 @@ func downloadPart(url string) ([]byte, error) {
 	maxRetries := 5
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			sleepCtx(time.Duration(attempt) * 2 * time.Second)
 		}
 
 		req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -372,7 +372,7 @@ func filterAvailableLangs(langs []string, available map[string]*Subtitle, kind s
 	var filtered []string
 	for _, locale := range langs {
 		if available[locale] == nil {
-			fmt.Printf("! %s locale %s is not available for episode %v, skipping it.\n", kind, locale, episode)
+			logf("! %s locale %s is not available for episode %v, skipping it.\n", kind, locale, episode)
 			continue
 		}
 		filtered = append(filtered, locale)
@@ -481,7 +481,10 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 	))
 
 	if _, statErr := os.Stat(outputFile); statErr == nil {
-		fmt.Printf("Episode %v is already downloaded, skipping...\n", info.EpisodeMetadata.EpisodeNumber)
+		logf("Episode %v is already downloaded, skipping...\n", info.EpisodeMetadata.EpisodeNumber)
+		ev := episodeEvent(baseContentId, info, StatusSkipped)
+		ev.Output = outputFile
+		emitEpisode(ev)
 		return
 	}
 
@@ -505,22 +508,25 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 	for _, locale := range audioLangs {
 		guid, ok := guidByLocale[locale]
 		if !ok {
-			fmt.Printf("! Audio locale %s is not available for episode %v, skipping it.\n", locale, info.EpisodeMetadata.EpisodeNumber)
+			logf("! Audio locale %s is not available for episode %v, skipping it.\n", locale, info.EpisodeMetadata.EpisodeNumber)
 			continue
 		}
 		versions = append(versions, audioVersion{locale: locale, contentId: guid})
 	}
 	if len(versions) == 0 {
-		fmt.Printf("! None of the requested audio locales are available for episode %v, aborting this episode.\n", info.EpisodeMetadata.EpisodeNumber)
-		return
+		return fmt.Errorf("none of the requested audio locales are available for episode %v", info.EpisodeMetadata.EpisodeNumber)
 	}
 
-	fmt.Printf("Downloading: %s (S%02vE%02v) from %s\n", info.Title, info.EpisodeMetadata.SeasonNumber, info.EpisodeMetadata.EpisodeNumber, info.EpisodeMetadata.SeriesTitle)
+	logf("Downloading: %s (S%02vE%02v) from %s\n", info.Title, info.EpisodeMetadata.SeasonNumber, info.EpisodeMetadata.EpisodeNumber, info.EpisodeMetadata.SeriesTitle)
 
 	// Space this download out from the previous one, if a delay is configured.
 	// Applied here rather than around the whole function so that episodes
 	// already on disk (returned above) don't burn the wait for nothing.
 	backoff.wait()
+	if err := runContext().Err(); err != nil {
+		return err
+	}
+	emitEpisode(episodeEvent(baseContentId, info, StatusStarted))
 
 	defer func() {
 		backoff.done()
@@ -530,10 +536,10 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 			} else {
 				err = fmt.Errorf("%v", r)
 			}
-			if *debug {
-				fmt.Printf("Recovered from error: %v\n%s\n", r, runtimedebug.Stack())
+			if debug {
+				logf("Recovered from error: %v\n%s\n", r, runtimedebug.Stack())
 			} else {
-				fmt.Printf("Recovered from error: %v\n", r)
+				logf("Recovered from error: %v\n", r)
 			}
 		}
 	}()
@@ -577,7 +583,7 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 	for i, version := range versions {
 		selectedGUIDs[i] = version.contentId
 	}
-	if err := runPlaybackJobs(len(versions), *simultaneous, func(i int) error {
+	if err := runPlaybackJobs(len(versions), simultaneous, func(i int) error {
 		version := versions[i]
 		return withPlaybackSession(version.contentId, func(ep Episode) error {
 			episodes[i] = ep
@@ -634,13 +640,13 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 	if requestsAll(subsLangs) || requestsAll(ccLangs) {
 		guids := additionalVersionGUIDs(guidByLocale, selectedGUIDs)
 		extraEpisodes := make([]Episode, len(guids))
-		if err := runPlaybackJobs(len(guids), *simultaneous, func(i int) error {
+		if err := runPlaybackJobs(len(guids), simultaneous, func(i int) error {
 			fetchErr := withPlaybackSession(guids[i], func(ep Episode) error {
 				extraEpisodes[i] = ep
 				return cacheSubtitles(ep)
 			})
 			if errors.Is(fetchErr, errPlaybackOpen) && !errors.Is(fetchErr, ErrRateLimited) && !errors.Is(fetchErr, ErrActiveStreams) {
-				fmt.Printf("! Playback %s is unavailable; skipping its subtitles and captions: %v\n", guids[i], fetchErr)
+				logf("! Playback %s is unavailable; skipping its subtitles and captions: %v\n", guids[i], fetchErr)
 				return nil
 			}
 			return fetchErr
@@ -658,7 +664,7 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 	subsLangs = expandLangs(subsLangs, availableSubtitleLangs(subtitles), "en-US")
 	ccLangs = expandLangs(ccLangs, availableSubtitleLangs(captions), "")
 
-	fmt.Printf("Audio locales: %s | Subtitle locales: %s | CC locales: %s\n",
+	logf("Audio locales: %s | Subtitle locales: %s | CC locales: %s\n",
 		strings.Join(audioLangs, ", "), strings.Join(subsLangs, ", "), strings.Join(ccLangs, ", "))
 
 	subsLangs = filterAvailableLangs(subsLangs, subtitles, "Subtitle", info.EpisodeMetadata.EpisodeNumber)
@@ -687,10 +693,14 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 		subTracks[j] = mediaTrack{file: subtitleFiles[job.url], locale: job.locale, format: job.format, isCC: job.isCC}
 	}
 	if len(subTracks) > 0 {
-		fmt.Println("Downloaded subtitles!")
+		logf("Downloaded subtitles!")
 	}
 
+	emitEpisode(episodeEvent(baseContentId, info, StatusMerging))
 	mergeEverything(videoFile, audioTracks, subTracks, outputFile, info)
+	ev := episodeEvent(baseContentId, info, StatusDone)
+	ev.Output = outputFile
+	emitEpisode(ev)
 	return nil
 }
 
@@ -698,26 +708,42 @@ func downloadEpisode(baseContentId string, info EpisodeInfo, audioLangs, subsLan
 // with a growing delay whenever Crunchyroll rate-limits the account, instead
 // of moving on to the next episode and immediately tripping the same rate
 // limit again.
-func downloadEpisodeWithRetry(baseContentId string, info EpisodeInfo, audioLangs, subsLangs, ccLangs []string, videoQuality, audioQuality *string, baseDirectory string) {
+func downloadEpisodeWithRetry(baseContentId string, info EpisodeInfo, audioLangs, subsLangs, ccLangs []string, videoQuality, audioQuality *string, baseDirectory string) error {
 	for {
 		err := downloadEpisode(baseContentId, info, audioLangs, subsLangs, ccLangs, videoQuality, audioQuality, baseDirectory)
 		if err == nil {
 			backoff.resetRateLimit()
-			return
+			return nil
+		}
+		if ctxErr := runContext().Err(); ctxErr != nil {
+			err = ctxErr
 		}
 		if !errors.Is(err, ErrRateLimited) {
-			return
+			logf("! %v", err)
+			ev := episodeEvent(baseContentId, info, StatusFailed)
+			ev.Error = err.Error()
+			emitEpisode(ev)
+			return err
 		}
 
 		wait := backoff.rateLimitWait()
 		retryAt := time.Now().Add(wait)
-		fmt.Printf("Retrying this episode in %s [%s]...\n", wait.Round(time.Second), retryAt.Local().Format(time.Kitchen))
-		time.Sleep(wait)
+		logf("Retrying this episode in %s [%s]...", wait.Round(time.Second), retryAt.Local().Format(time.Kitchen))
+		ev := episodeEvent(baseContentId, info, StatusRetrying)
+		ev.Error = err.Error()
+		ev.RetryAt = &retryAt
+		emitEpisode(ev)
+		sleepCtx(wait)
 	}
 }
 
-func downloadSeason(videoQuality, audioQuality *string, audioLangs, subsLangs, ccLangs []string, episodes []SeasonEpisode, baseDirectory string) {
-	fmt.Printf("Downloading season %v of %s (%v episodes)\n\n", episodes[0].SeasonNumber, episodes[0].SeriesTitle, len(episodes))
+// downloadSeason downloads every episode, moving past failed ones; it stops
+// early only when the download is cancelled.
+func downloadSeason(videoQuality, audioQuality *string, audioLangs, subsLangs, ccLangs []string, episodes []SeasonEpisode, baseDirectory string) error {
+	if len(episodes) == 0 {
+		return nil
+	}
+	logf("Downloading season %v of %s (%v episodes)", episodes[0].SeasonNumber, episodes[0].SeriesTitle, len(episodes))
 
 	for _, episode := range episodes {
 		info := EpisodeInfo{
@@ -732,6 +758,10 @@ func downloadSeason(videoQuality, audioQuality *string, audioLangs, subsLangs, c
 			Title: episode.Title,
 		}
 
-		downloadEpisodeWithRetry(episode.ID, info, audioLangs, subsLangs, ccLangs, videoQuality, audioQuality, baseDirectory)
+		_ = downloadEpisodeWithRetry(episode.ID, info, audioLangs, subsLangs, ccLangs, videoQuality, audioQuality, baseDirectory)
+		if err := runContext().Err(); err != nil {
+			return err
+		}
 	}
+	return nil
 }
