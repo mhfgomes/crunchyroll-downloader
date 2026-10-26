@@ -244,6 +244,20 @@ func Login(cookie string) error {
 	return nil
 }
 
+// ensureToken fetches an anonymous token when nobody has logged in, so search
+// and lookups work before the user adds their cookie.
+func ensureToken() error {
+	if token != "" {
+		return nil
+	}
+	t, err := GetAccessToken("")
+	if err != nil {
+		return err
+	}
+	token = t
+	return nil
+}
+
 // FindFFmpeg locates ffmpeg and uses it for merging.
 func FindFFmpeg() (string, error) {
 	path, err := findFFmpeg()
@@ -404,6 +418,9 @@ type LookupResult struct {
 // Lookup resolves a Crunchyroll URL without downloading anything.
 func Lookup(url string) (res LookupResult, err error) {
 	defer recoverErr(&err)
+	if err := ensureToken(); err != nil {
+		return LookupResult{}, err
+	}
 	contentType, contentId := parseUrl(url)
 	switch contentType {
 	case "watch":
@@ -413,7 +430,7 @@ func Lookup(url string) (res LookupResult, err error) {
 	case "series":
 		langs := selectLangs()
 		seasons := getSeasons(contentId, langs.primaryAudio, langs.primarySubs)
-		res := LookupResult{Kind: "series"}
+		res := LookupResult{Kind: "series", SeriesTitle: getSeriesTitle(contentId, langs.primarySubs)}
 		for _, s := range seasons {
 			res.Seasons = append(res.Seasons, SeasonSummary{ID: s.ID, Title: s.Title, Number: s.SeasonNumber, EpisodeCount: s.NumberOfEpisodes, AudioLocales: s.AudioLocales})
 			if res.SeriesTitle == "" {
@@ -428,6 +445,9 @@ func Lookup(url string) (res LookupResult, err error) {
 // SeasonEpisodes lists the episodes of a season.
 func SeasonEpisodes(seasonID string) (titles []Title, err error) {
 	defer recoverErr(&err)
+	if err := ensureToken(); err != nil {
+		return nil, err
+	}
 	langs := selectLangs()
 	for _, e := range getSeasonEpisodes(seasonID, langs.primaryAudio, langs.primarySubs) {
 		titles = append(titles, Title{

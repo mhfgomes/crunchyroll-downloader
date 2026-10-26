@@ -44,6 +44,9 @@ func Search(query string) ([]SearchResult, error) {
 	if query == "" {
 		return nil, nil
 	}
+	if err := ensureToken(); err != nil {
+		return nil, err
+	}
 	params := url.Values{}
 	params.Set("q", query)
 	params.Set("n", "24")

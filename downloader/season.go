@@ -129,3 +129,27 @@ func getSeasons(contentId string, audioLocale string, subLocale string) []Season
 
 	return seasons.Data
 }
+
+// getSeriesTitle returns a series' display title, or "" if it can't be read.
+func getSeriesTitle(seriesID, locale string) string {
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("https://www.crunchyroll.com/content/v2/cms/series/%s?locale=%s", seriesID, locale), nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0")
+	resp, err := DoRequest(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Data []struct {
+			Title string `json:"title"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&body) != nil || len(body.Data) == 0 {
+		return ""
+	}
+	return body.Data[0].Title
+}

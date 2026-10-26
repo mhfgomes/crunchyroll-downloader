@@ -61,7 +61,7 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
 
   // Search titles as the user types; links are looked up directly instead.
   useEffect(() => {
-    if (!loggedIn || query.length < 2 || isLink(query)) {
+    if (query.length < 2 || isLink(query)) {
       setSearching(false)
       return
     }
@@ -83,7 +83,7 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
       stale = true
       clearTimeout(timer)
     }
-  }, [query, loggedIn])
+  }, [query])
 
   function openSeries(r: SearchResult) {
     void lookup(`https://www.crunchyroll.com/series/${r.id}`)
@@ -175,9 +175,8 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
             type="search"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder={loggedIn ? "Search Crunchyroll, or paste a series or episode link" : "Sign in to search Crunchyroll"}
+            placeholder="Search Crunchyroll, or paste a series or episode link"
             className="h-11 rounded-full pr-10 pl-10 text-[15px] [&::-webkit-search-cancel-button]:hidden"
-            disabled={!loggedIn}
             autoFocus
           />
           {url && (
@@ -196,7 +195,7 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
             <span className="size-1.5 rounded-full bg-destructive" />
             {env.loginError}
             <Button variant="link" size="sm" className="h-auto px-0" onClick={onOpenSettings}>
-              Add your cookie in Settings
+              Add your cookie in Settings to download
             </Button>
           </p>
         )}

@@ -19,6 +19,9 @@ func TestSearchKeepsSeriesOnly(t *testing.T) {
 	old := searchURL
 	searchURL = srv.URL
 	defer func() { searchURL = old }()
+	oldToken := token
+	token = "test"
+	defer func() { token = oldToken }()
 
 	got, err := Search(" frieren ")
 	if err != nil {

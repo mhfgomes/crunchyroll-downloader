@@ -35,6 +35,11 @@ func GetAccessToken(etpRt string) (string, error) {
 	body.Set("device_id", deviceId)
 	body.Set("device_type", "Firefox on Linux")
 	body.Set("grant_type", "etp_rt_cookie")
+	if etpRt == "" {
+		// Without a cookie Crunchyroll issues an anonymous token, which is
+		// enough for searching and browsing but not for playback.
+		body.Set("grant_type", "client_id")
+	}
 
 	req, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(body.Encode()))
 	if err != nil {
@@ -44,7 +49,9 @@ func GetAccessToken(etpRt string) (string, error) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0")
 	req.AddCookie(&http.Cookie{Name: "device_id", Value: deviceId})
-	req.AddCookie(&http.Cookie{Name: "etp_rt", Value: etpRt})
+	if etpRt != "" {
+		req.AddCookie(&http.Cookie{Name: "etp_rt", Value: etpRt})
+	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
