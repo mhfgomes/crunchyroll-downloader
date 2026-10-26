@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2c2f47"/>
+      <stop offset="1" stop-color="#171826"/>
+    </linearGradient>
+    <linearGradient id="tri" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff8a3d"/>
+      <stop offset="1" stop-color="#e8601a"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="url(#bg)"/>
+  <rect x="64.5" y="64.5" width="895" height="895" rx="207.5" fill="none" stroke="#b4adeb" stroke-opacity="0.18" stroke-width="3"/>
+  <!-- A play button turned to point down: watching becomes downloading. -->
+  <path d="M332 300 Q300 300 316 328 L486 622 Q512 666 538 622 L708 328 Q724 300 692 300 Z" fill="url(#tri)"/>
+  <rect x="300" y="712" width="424" height="56" rx="28" fill="#b4adeb"/>
+</svg>

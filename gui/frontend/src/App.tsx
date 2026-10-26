@@ -6,6 +6,7 @@ import {
   SettingsIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import logo from "@/assets/logo.svg"
 
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -37,10 +38,13 @@ export function App() {
       <TooltipProvider>
         <div className="flex h-full">
           <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar">
-            <div className="px-4 pt-6 pb-7 font-heading text-[22px] leading-[0.95] font-extrabold tracking-tight">
-              Crunchyroll
-              <br />
-              <span className="text-primary">downloader</span>
+            <div className="flex items-center gap-2.5 px-3 pt-6 pb-7">
+              <img src={logo} alt="" className="size-11 shrink-0" />
+              <div className="font-heading text-[19px] leading-[0.95] font-extrabold tracking-tight">
+                Crunchyroll
+                <br />
+                <span className="text-primary">downloader</span>
+              </div>
             </div>
             <nav className="flex flex-col gap-0.5 px-2">
               {NAV.map(({ id, label, icon: Icon }) => (
