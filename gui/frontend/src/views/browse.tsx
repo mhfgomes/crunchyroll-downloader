@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EpisodeTile, SeriesCard, seriesLink } from "@/components/title-cards"
+import { Home } from "@/views/home"
 import { useBackend } from "@/hooks/use-backend"
 import {
   api,
@@ -180,11 +181,15 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
   }
 
   const blocked = !loggedIn
+  const home = !result && !loading && searchResults === null && !error
 
   return (
     <div className="flex h-full flex-col">
       <form
-        className="border-b px-8 py-5"
+        className={cn(
+          "z-10 px-8 py-5",
+          home ? "pointer-events-none absolute inset-x-0 top-0 [&>*]:pointer-events-auto" : "border-b"
+        )}
         onSubmit={(e) => {
           e.preventDefault()
           if (isLink(query)) void lookup()
@@ -193,16 +198,16 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
       >
         <div className="relative">
           {searching || loading ? (
-            <Loader2Icon className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+            <Loader2Icon className="pointer-events-none absolute top-1/2 left-3.5 z-10 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
           ) : (
-            <SearchIcon className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-3.5 z-10 size-4 -translate-y-1/2 text-muted-foreground" />
           )}
           <Input
             type="search"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="Search Crunchyroll, or paste a series or episode link"
-            className="h-11 rounded-full pr-10 pl-10 text-[15px] [&::-webkit-search-cancel-button]:hidden"
+            className={cn("h-11 rounded-full pr-10 pl-10 text-[15px] [&::-webkit-search-cancel-button]:hidden", home && "border-white/15 bg-background/50 shadow-lg shadow-black/20 backdrop-blur-md dark:bg-background/50")}
             autoFocus
           />
           {url && (
@@ -210,14 +215,14 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
               type="button"
               aria-label="Clear search"
               onClick={clear}
-              className="absolute top-1/2 right-2.5 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="absolute top-1/2 right-2.5 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
             >
               <XIcon className="size-3.5" />
             </button>
           )}
         </div>
         {env && !env.loggedIn && (
-          <p className="mt-3 flex items-center gap-2 pl-4 text-sm text-muted-foreground">
+          <p className="mt-3 flex w-fit items-center gap-2 rounded-full pr-3 pl-4 text-sm text-muted-foreground">
             <span className="size-1.5 rounded-full bg-destructive" />
             {env.loginError}
             <Button variant="link" size="sm" className="h-auto px-0" onClick={onOpenSettings}>
@@ -228,10 +233,9 @@ export function BrowseView({ onQueued, onOpenSettings }: { onQueued: () => void;
       </form>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="px-8 pt-7 pb-28">
+        {home && <Home onOpen={openSeries} onQueue={(id, seasons) => void queueSeries(id, seasons)} />}
+        <div className={cn("px-8 pt-7 pb-28", home && "hidden")}>
           {error && <p className="mb-6 text-sm text-destructive selectable">{error}</p>}
-
-          {!result && !loading && searchResults === null && !error && <Intro />}
 
           {!result && !loading && searchResults !== null && (
             <SearchResults results={searchResults} query={query} onOpen={openSeries} onQueue={(id, seasons) => void queueSeries(id, seasons)} />
@@ -367,20 +371,6 @@ function GridSkeleton() {
           <Skeleton className="mt-1.5 h-3 w-1/3" />
         </div>
       ))}
-    </div>
-  )
-}
-
-function Intro() {
-  return (
-    <div className="max-w-lg pt-16">
-      <h1 className="font-heading text-5xl leading-[1.05] font-bold tracking-tight">
-        What are we watching tonight?
-      </h1>
-      <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-        Search for a series to pick episodes from any season, or paste an episode link to grab just that one.
-        Files are saved as MKV with every audio and subtitle track you chose in Settings.
-      </p>
     </div>
   )
 }

@@ -543,3 +543,8 @@ func (a *App) OpenURL(url string) {
 func (a *App) Search(query string) ([]downloader.SearchResult, error) {
 	return downloader.Search(query)
 }
+
+// Browse lists catalogue series sorted by "popularity" or "newly_added".
+func (a *App) Browse(sortBy string, n int) ([]downloader.SearchResult, error) {
+	return downloader.Browse(sortBy, n)
+}

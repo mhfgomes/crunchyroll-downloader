@@ -151,6 +151,7 @@ export namespace downloader {
 	    title: string;
 	    description: string;
 	    poster: string;
+	    backdrop: string;
 	    seasonCount: number;
 	    episodeCount: number;
 	
@@ -164,6 +165,7 @@ export namespace downloader {
 	        this.title = source["title"];
 	        this.description = source["description"];
 	        this.poster = source["poster"];
+	        this.backdrop = source["backdrop"];
 	        this.seasonCount = source["seasonCount"];
 	        this.episodeCount = source["episodeCount"];
 	    }
