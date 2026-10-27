@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.0.1"
+	},
+	"info": {
+		"0409": {
+			"ProductVersion": "0.0.1",
+			"CompanyName": "CuteTenshii",
+			"FileDescription": "Download Crunchyroll episodes as MKV files",
+			"LegalCopyright": "(c) 2026, CuteTenshii",
+			"ProductName": "Crunchyroll Downloader",
+			"Comments": "This is a comment"
+		}
+	}
+}

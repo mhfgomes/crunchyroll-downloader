@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=Crunchyroll Downloader
+Comment=Download Crunchyroll episodes as MKV files
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/crdl-gui %u
+Terminal=false
+Type=Application
+Icon=crdl-gui
+Categories=Utility;
+StartupWMClass=crdl-gui
+
+ 

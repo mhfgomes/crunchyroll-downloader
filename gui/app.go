@@ -1,0 +1,729 @@
+package main
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	goruntime "runtime"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"crunchyroll-downloader/downloader"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+)
+
+// Settings is everything the GUI persists between launches.
+type Settings struct {
+	EtpRt      string             `json:"etpRt"`
+	FFmpegPath string             `json:"ffmpegPath"`
+	Options    downloader.Options `json:"options"`
+}
+
+// JobStatus is the lifecycle of a queued episode.
+type JobStatus string
+
+const (
+	JobQueued      JobStatus = "queued"
+	JobDownloading JobStatus = "downloading"
+	JobMerging     JobStatus = "merging"
+	JobWaiting     JobStatus = "waiting"
+	JobPaused      JobStatus = "paused"
+	JobDone        JobStatus = "done"
+	JobSkipped     JobStatus = "skipped"
+	JobFailed      JobStatus = "failed"
+	JobCancelled   JobStatus = "cancelled"
+)
+
+// Track is one in-flight track download of a job.
+type Track struct {
+	ID       int64   `json:"id"`
+	Title    string  `json:"title"`
+	Label    string  `json:"label"`
+	Current  int64   `json:"current"`
+	Total    int64   `json:"total"`
+	RateMbps float64 `json:"rateMbps"`
+}
+
+// Job is one episode in the download queue.
+type Job struct {
+	ID      string           `json:"id"`
+	Title   downloader.Title `json:"title"`
+	Status  JobStatus        `json:"status"`
+	Error   string           `json:"error,omitempty"`
+	Output  string           `json:"output,omitempty"`
+	RetryAt *time.Time       `json:"retryAt,omitempty"`
+	Tracks  []Track          `json:"tracks"`
+}
+
+// QueueState is the queue as the frontend sees it.
+type QueueState struct {
+	Paused bool   `json:"paused"`
+	Jobs   []*Job `json:"jobs"`
+}
+
+// stopReason records why the running job's context was cancelled.
+type stopReason int
+
+const (
+	stopCancel stopReason = iota
+	stopPause
+	stopSkip
+	stopQueue // the whole queue was paused; the job goes back to the front
+)
+
+// Environment reports what the downloader needs before it can run.
+type Environment struct {
+	FFmpegPath  string `json:"ffmpegPath"`
+	FFmpegError string `json:"ffmpegError,omitempty"`
+	Widevine    bool   `json:"widevine"`
+	LoggedIn    bool   `json:"loggedIn"`
+	LoginError  string `json:"loginError,omitempty"`
+}
+
+// Language is a selectable locale.
+type Language struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+// LogLine is a timestamped message from the downloader.
+type LogLine struct {
+	Time string `json:"time"`
+	Text string `json:"text"`
+}
+
+// App is bound to the frontend.
+type App struct {
+	ctx   context.Context
+	store *store
+
+	mu        sync.Mutex
+	paused    bool
+	stop      stopReason
+	settings  Settings
+	env       Environment
+	jobs      []*Job
+	nextID    int
+	current   *Job
+	cancel    context.CancelFunc
+	wake      chan struct{}
+	lastEmit  time.Time
+	emitTimer *time.Timer
+	logs      []LogLine
+}
+
+func NewApp() *App {
+	return &App{wake: make(chan struct{}, 1)}
+}
+
+// ServiceStartup runs when the Wails application starts.
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
+	a.ctx = ctx
+	st, err := openStore()
+	if err != nil {
+		return fmt.Errorf("opening the database: %w", err)
+	}
+	a.store = st
+	a.settings = st.loadSettings(defaultSettings())
+	if jobs, paused, err := st.loadQueue(); err == nil {
+		a.jobs, a.paused = jobs, paused
+		for _, j := range jobs {
+			if n, _ := strconv.Atoi(j.ID); n > a.nextID {
+				a.nextID = n
+			}
+		}
+	}
+	if err := downloader.Configure(a.settings.Options); err != nil {
+		a.settings.Options = downloader.DefaultOptions()
+		_ = downloader.Configure(a.settings.Options)
+	}
+	downloader.SetHooks(downloader.Hooks{
+		Log:      a.onLog,
+		Progress: a.onProgress,
+		Episode:  a.onEpisode,
+	})
+	go a.worker()
+	return nil
+}
+
+// ServiceShutdown saves the queue and closes the database.
+func (a *App) ServiceShutdown() error {
+	if a.store == nil {
+		return nil
+	}
+	a.mu.Lock()
+	err := a.store.saveQueue(a.jobs, a.paused)
+	a.mu.Unlock()
+	return errors.Join(err, a.store.Close())
+}
+
+func defaultSettings() Settings {
+	s := Settings{Options: downloader.DefaultOptions()}
+	if home, err := os.UserHomeDir(); err == nil {
+		s.Options.OutputDir = filepath.Join(home, "Videos", "Crunchyroll")
+	}
+	return s
+}
+
+// GetSettings returns the saved settings.
+func (a *App) GetSettings() Settings {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.settings
+}
+
+// DefaultOptions returns the downloader defaults.
+func (a *App) DefaultOptions() downloader.Options {
+	return downloader.DefaultOptions()
+}
+
+// SaveSettings validates, applies and persists settings. It blocks until any
+// running download finishes with the old options.
+func (a *App) SaveSettings(s Settings) (Environment, error) {
+	if err := downloader.Configure(s.Options); err != nil {
+		return a.Environment(), err
+	}
+	a.mu.Lock()
+	cookieChanged := s.EtpRt != a.settings.EtpRt
+	a.settings = s
+	err := a.store.saveSettings(s)
+	a.mu.Unlock()
+	if err != nil {
+		return a.Environment(), fmt.Errorf("saving settings: %w", err)
+	}
+	if cookieChanged {
+		return a.CheckEnvironment(), nil
+	}
+	return a.refreshEnvironment(false), nil
+}
+
+// Environment returns the last environment check without repeating it.
+func (a *App) Environment() Environment {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.env
+}
+
+// CheckEnvironment locates ffmpeg and the CDM and logs in.
+func (a *App) CheckEnvironment() Environment {
+	return a.refreshEnvironment(true)
+}
+
+func (a *App) refreshEnvironment(login bool) Environment {
+	a.mu.Lock()
+	s := a.settings
+	env := a.env
+	a.mu.Unlock()
+
+	env.FFmpegError = ""
+	if s.FFmpegPath != "" {
+		if _, err := os.Stat(s.FFmpegPath); err != nil {
+			env.FFmpegPath, env.FFmpegError = "", "The configured ffmpeg path does not exist."
+		} else {
+			env.FFmpegPath = s.FFmpegPath
+			downloader.SetFFmpegPath(s.FFmpegPath)
+		}
+	} else if path, err := downloader.FindFFmpeg(); err != nil {
+		env.FFmpegPath, env.FFmpegError = "", "FFmpeg wasn't found on PATH or next to the app."
+	} else {
+		env.FFmpegPath = path
+	}
+	env.Widevine = downloader.HasWidevineDevice()
+
+	if login {
+		env.LoggedIn, env.LoginError = false, ""
+		switch err := downloader.Login(s.EtpRt); {
+		case s.EtpRt == "":
+			env.LoginError = "No etp_rt cookie saved yet."
+		case errors.Is(err, downloader.ErrAuthRejected):
+			env.LoginError = "Crunchyroll rejected the etp_rt cookie. Copy a fresh one from your browser."
+		case err != nil:
+			env.LoginError = err.Error()
+		default:
+			env.LoggedIn = true
+		}
+	}
+
+	a.mu.Lock()
+	a.env = env
+	a.mu.Unlock()
+	return env
+}
+
+// Languages lists the known locales and their display names.
+func (a *App) Languages() []Language {
+	var out []Language
+	for _, code := range downloader.Languages() {
+		out = append(out, Language{Code: code, Name: downloader.LanguageName(code)})
+	}
+	return out
+}
+
+// Lookup resolves a Crunchyroll URL.
+func (a *App) Lookup(url string) (downloader.LookupResult, error) {
+	return downloader.Lookup(url)
+}
+
+// SeasonEpisodes lists a season's episodes.
+func (a *App) SeasonEpisodes(seasonID string) ([]downloader.Title, error) {
+	return downloader.SeasonEpisodes(seasonID)
+}
+
+// Enqueue adds titles to the download queue, skipping ones already waiting.
+func (a *App) Enqueue(titles []downloader.Title) QueueState {
+	a.mu.Lock()
+	pending := map[string]bool{}
+	for _, j := range a.jobs {
+		if isActive(j.Status) {
+			pending[j.Title.ID] = true
+		}
+	}
+	for _, t := range titles {
+		if pending[t.ID] {
+			continue
+		}
+		a.nextID++
+		a.jobs = append(a.jobs, &Job{ID: strconv.Itoa(a.nextID), Title: t, Status: JobQueued, Tracks: []Track{}})
+	}
+	a.mu.Unlock()
+	a.signal()
+	a.emitQueue(true)
+	return a.Queue()
+}
+
+func isActive(s JobStatus) bool {
+	return s == JobQueued || s == JobDownloading || s == JobMerging || s == JobWaiting || s == JobPaused
+}
+
+// Queue returns a snapshot of the download queue.
+func (a *App) Queue() QueueState {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.snapshotLocked()
+}
+
+func (a *App) snapshotLocked() QueueState {
+	out := make([]*Job, len(a.jobs))
+	for i, j := range a.jobs {
+		c := *j
+		c.Tracks = append([]Track{}, j.Tracks...)
+		out[i] = &c
+	}
+	return QueueState{Paused: a.paused, Jobs: out}
+}
+
+// update runs fn under the lock, then wakes the worker and publishes the queue.
+func (a *App) update(fn func()) {
+	a.mu.Lock()
+	fn()
+	a.mu.Unlock()
+	a.signal()
+	a.emitQueue(true)
+}
+
+func (a *App) findLocked(id string) (int, *Job) {
+	for i, j := range a.jobs {
+		if j.ID == id {
+			return i, j
+		}
+	}
+	return -1, nil
+}
+
+// stopCurrentLocked cancels the running job, recording why.
+func (a *App) stopCurrentLocked(why stopReason) {
+	if a.cancel != nil {
+		a.stop = why
+		a.cancel()
+	}
+}
+
+// PauseAll stops the queue. The running episode is interrupted and will start
+// over when the queue resumes.
+func (a *App) PauseAll() {
+	a.update(func() {
+		a.paused = true
+		a.stopCurrentLocked(stopQueue)
+	})
+}
+
+// ResumeAll restarts the queue.
+func (a *App) ResumeAll() {
+	a.update(func() { a.paused = false })
+}
+
+// Pause holds one job so the queue moves past it.
+func (a *App) Pause(id string) {
+	a.update(func() {
+		_, j := a.findLocked(id)
+		switch {
+		case j == nil:
+		case j == a.current:
+			a.stopCurrentLocked(stopPause)
+		case j.Status == JobQueued:
+			j.Status = JobPaused
+		}
+	})
+}
+
+// Resume puts a paused job back in the queue.
+func (a *App) Resume(id string) {
+	a.update(func() {
+		if _, j := a.findLocked(id); j != nil && j.Status == JobPaused {
+			j.Status = JobQueued
+		}
+	})
+}
+
+// Skip passes over a job without downloading it.
+func (a *App) Skip(id string) {
+	a.update(func() {
+		_, j := a.findLocked(id)
+		switch {
+		case j == nil:
+		case j == a.current:
+			a.stopCurrentLocked(stopSkip)
+		case j.Status == JobQueued || j.Status == JobPaused:
+			j.Status, j.Error = JobSkipped, "Skipped"
+		}
+	})
+}
+
+// Move shifts a job to index to in the queue.
+func (a *App) Move(id string, to int) {
+	a.update(func() {
+		i, j := a.findLocked(id)
+		if j == nil {
+			return
+		}
+		to = max(0, min(to, len(a.jobs)-1))
+		a.jobs = append(a.jobs[:i], a.jobs[i+1:]...)
+		a.jobs = append(a.jobs[:to], append([]*Job{j}, a.jobs[to:]...)...)
+	})
+}
+
+// SortPending reorders the jobs that haven't started yet, leaving running and
+// finished jobs where they are. by is "episode" (series, season, number),
+// "title", "added" or "reverse".
+func (a *App) SortPending(by string) {
+	a.update(func() {
+		var slots []int
+		var pending []*Job
+		for i, j := range a.jobs {
+			if (j.Status == JobQueued || j.Status == JobPaused) && j != a.current {
+				slots = append(slots, i)
+				pending = append(pending, j)
+			}
+		}
+		added := func(j *Job) int { n, _ := strconv.Atoi(j.ID); return n }
+		switch by {
+		case "reverse":
+			slices.Reverse(pending)
+		case "title":
+			slices.SortStableFunc(pending, func(x, y *Job) int {
+				return cmp.Compare(strings.ToLower(x.Title.Title), strings.ToLower(y.Title.Title))
+			})
+		case "added":
+			slices.SortStableFunc(pending, func(x, y *Job) int { return cmp.Compare(added(x), added(y)) })
+		default:
+			slices.SortStableFunc(pending, func(x, y *Job) int {
+				return cmp.Or(
+					cmp.Compare(strings.ToLower(x.Title.SeriesTitle), strings.ToLower(y.Title.SeriesTitle)),
+					cmp.Compare(x.Title.Season, y.Title.Season),
+					cmp.Compare(x.Title.Number, y.Title.Number),
+				)
+			})
+		}
+		for k, i := range slots {
+			a.jobs[i] = pending[k]
+		}
+	})
+}
+
+// RetryFailed re-queues every failed or cancelled job.
+func (a *App) RetryFailed() {
+	a.update(func() {
+		for _, j := range a.jobs {
+			if j.Status == JobFailed || j.Status == JobCancelled {
+				j.Status, j.Error, j.RetryAt, j.Tracks = JobQueued, "", nil, []Track{}
+			}
+		}
+	})
+}
+
+// Cancel stops a running job or drops a queued one.
+func (a *App) Cancel(id string) {
+	a.mu.Lock()
+	for _, j := range a.jobs {
+		if j.ID != id {
+			continue
+		}
+		if j == a.current {
+			a.stopCurrentLocked(stopCancel)
+		} else if j.Status == JobQueued || j.Status == JobPaused {
+			j.Status = JobCancelled
+		}
+	}
+	a.mu.Unlock()
+	a.emitQueue(true)
+}
+
+// Retry re-queues a failed or cancelled job.
+func (a *App) Retry(id string) {
+	a.mu.Lock()
+	for _, j := range a.jobs {
+		if j.ID == id && (j.Status == JobFailed || j.Status == JobCancelled) {
+			j.Status, j.Error, j.RetryAt, j.Tracks = JobQueued, "", nil, []Track{}
+		}
+	}
+	a.mu.Unlock()
+	a.signal()
+	a.emitQueue(true)
+}
+
+// Remove drops a job that is not running.
+func (a *App) Remove(id string) {
+	a.mu.Lock()
+	for i, j := range a.jobs {
+		if j.ID == id && j != a.current {
+			a.jobs = append(a.jobs[:i], a.jobs[i+1:]...)
+			break
+		}
+	}
+	a.mu.Unlock()
+	a.emitQueue(true)
+}
+
+// ClearFinished removes every job that is no longer pending.
+func (a *App) ClearFinished() {
+	a.mu.Lock()
+	kept := a.jobs[:0]
+	for _, j := range a.jobs {
+		if isActive(j.Status) {
+			kept = append(kept, j)
+		}
+	}
+	a.jobs = kept
+	a.mu.Unlock()
+	a.emitQueue(true)
+}
+
+// Logs returns the retained log lines.
+func (a *App) Logs() []LogLine {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]LogLine{}, a.logs...)
+}
+
+func (a *App) signal() {
+	select {
+	case a.wake <- struct{}{}:
+	default:
+	}
+}
+
+// worker downloads queued jobs one at a time.
+func (a *App) worker() {
+	for {
+		a.mu.Lock()
+		var job *Job
+		for _, j := range a.jobs {
+			if j.Status == JobQueued && !a.paused {
+				job = j
+				break
+			}
+		}
+		if job == nil {
+			a.mu.Unlock()
+			<-a.wake
+			continue
+		}
+		ctx, cancel := context.WithCancel(a.ctx)
+		a.current, a.cancel, a.stop = job, cancel, stopCancel
+		job.Status, job.Error = JobDownloading, ""
+		a.mu.Unlock()
+		a.emitQueue(true)
+
+		err := downloader.DownloadTitle(ctx, job.Title)
+
+		a.mu.Lock()
+		switch {
+		case ctx.Err() != nil:
+			switch a.stop {
+			case stopPause:
+				job.Status = JobPaused
+			case stopSkip:
+				job.Status, job.Error = JobSkipped, "Skipped"
+			case stopQueue:
+				job.Status, job.Error = JobQueued, ""
+			default:
+				job.Status = JobCancelled
+			}
+		case err != nil:
+			job.Status, job.Error = JobFailed, err.Error()
+		case job.Status != JobSkipped:
+			job.Status = JobDone
+		}
+		job.Tracks, job.RetryAt = []Track{}, nil
+		a.current, a.cancel = nil, nil
+		a.mu.Unlock()
+		cancel()
+		a.emitQueue(true)
+	}
+}
+
+func (a *App) onLog(line string) {
+	l := LogLine{Time: time.Now().Format("15:04:05"), Text: line}
+	a.mu.Lock()
+	a.logs = append(a.logs, l)
+	if len(a.logs) > 2000 {
+		a.logs = a.logs[len(a.logs)-2000:]
+	}
+	a.mu.Unlock()
+	application.Get().Event.Emit("log", l)
+}
+
+func (a *App) onProgress(ev downloader.ProgressEvent) {
+	a.mu.Lock()
+	job := a.current
+	if job != nil {
+		idx := -1
+		for i, t := range job.Tracks {
+			if t.ID == ev.ID {
+				idx = i
+			}
+		}
+		switch {
+		case ev.Done && idx >= 0:
+			job.Tracks = append(job.Tracks[:idx], job.Tracks[idx+1:]...)
+		case !ev.Done && idx >= 0:
+			job.Tracks[idx] = trackFrom(ev)
+		case !ev.Done:
+			job.Tracks = append(job.Tracks, trackFrom(ev))
+		}
+	}
+	a.mu.Unlock()
+	a.emitQueue(false)
+}
+
+func trackFrom(ev downloader.ProgressEvent) Track {
+	return Track{ID: ev.ID, Title: ev.Title, Label: ev.Label, Current: ev.Current, Total: ev.Total, RateMbps: ev.RateMbps}
+}
+
+func (a *App) onEpisode(ev downloader.EpisodeEvent) {
+	a.mu.Lock()
+	if job := a.current; job != nil && job.Title.ID == ev.ID {
+		switch ev.Status {
+		case downloader.StatusStarted:
+			job.Status, job.RetryAt = JobDownloading, nil
+		case downloader.StatusMerging:
+			job.Status = JobMerging
+		case downloader.StatusRetrying:
+			job.Status, job.RetryAt, job.Error = JobWaiting, ev.RetryAt, ev.Error
+		case downloader.StatusSkipped:
+			job.Status, job.Output = JobSkipped, ev.Output
+		case downloader.StatusDone:
+			job.Output = ev.Output
+		}
+	}
+	a.mu.Unlock()
+	a.emitQueue(true)
+}
+
+// emitQueue pushes the queue to the frontend, throttling progress-only updates
+// to about ten per second.
+func (a *App) emitQueue(force bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !force && time.Since(a.lastEmit) < 100*time.Millisecond {
+		if a.emitTimer == nil {
+			a.emitTimer = time.AfterFunc(100*time.Millisecond, func() {
+				a.mu.Lock()
+				defer a.mu.Unlock()
+				a.emitTimer = nil
+				a.lastEmit = time.Now()
+				application.Get().Event.Emit("queue", a.snapshotLocked())
+			})
+		}
+		return
+	}
+	a.lastEmit = time.Now()
+	// Progress-only updates aren't worth a write; everything else is saved.
+	if force && a.store != nil {
+		if err := a.store.saveQueue(a.jobs, a.paused); err != nil {
+			go a.onLog("Couldn't save the queue: " + err.Error())
+		}
+	}
+	application.Get().Event.Emit("queue", a.snapshotLocked())
+}
+
+// PickDirectory opens a folder picker, returning "" when cancelled.
+func (a *App) PickDirectory(title, current string) (string, error) {
+	return application.Get().Dialog.OpenFile().
+		SetTitle(title).
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		CanCreateDirectories(true).
+		SetDirectory(existingDir(current)).
+		PromptForSingleSelection()
+}
+
+// PickFile opens a file picker, returning "" when cancelled.
+func (a *App) PickFile(title, current, pattern string) (string, error) {
+	d := application.Get().Dialog.OpenFile().
+		SetTitle(title).
+		CanChooseFiles(true).
+		SetDirectory(existingDir(filepath.Dir(current)))
+	if pattern != "" {
+		d.AddFilter(pattern, pattern)
+	}
+	return d.PromptForSingleSelection()
+}
+
+func existingDir(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	if st, err := os.Stat(dir); err == nil && st.IsDir() {
+		return dir
+	}
+	return ""
+}
+
+// Reveal shows a file in the system file manager.
+func (a *App) Reveal(path string) error {
+	switch goruntime.GOOS {
+	case "windows":
+		return exec.Command("explorer", "/select,", path).Start()
+	case "darwin":
+		return exec.Command("open", "-R", path).Start()
+	default:
+		return exec.Command("xdg-open", filepath.Dir(path)).Start()
+	}
+}
+
+// OpenURL opens a link in the default browser.
+func (a *App) OpenURL(url string) error {
+	return application.Get().Browser.OpenURL(url)
+}
+
+// Search finds series by title.
+func (a *App) Search(query string) ([]downloader.SearchResult, error) {
+	return downloader.Search(query)
+}
+
+// Browse lists catalogue series sorted by "popularity" or "newly_added".
+func (a *App) Browse(sortBy string, n int) ([]downloader.SearchResult, error) {
+	return downloader.Browse(sortBy, n)
+}
