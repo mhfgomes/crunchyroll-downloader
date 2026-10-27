@@ -19,6 +19,7 @@ export type JobStatus =
   | "downloading"
   | "merging"
   | "waiting"
+  | "paused"
   | "done"
   | "skipped"
   | "failed"
@@ -30,8 +31,10 @@ export type Job = Omit<main.Job, "status" | "retryAt"> & {
 
 export const api = App
 
-export function onQueue(cb: (jobs: Job[]) => void) {
-  return Events.On("queue", (ev) => cb(ev.data as Job[]))
+export type QueueState = { paused: boolean; jobs: Job[] }
+
+export function onQueue(cb: (q: QueueState) => void) {
+  return Events.On("queue", (ev) => cb(ev.data as QueueState))
 }
 
 export function onLog(cb: (line: LogLine) => void) {

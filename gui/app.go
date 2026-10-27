@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -33,6 +32,7 @@ const (
 	JobDownloading JobStatus = "downloading"
 	JobMerging     JobStatus = "merging"
 	JobWaiting     JobStatus = "waiting"
+	JobPaused      JobStatus = "paused"
 	JobDone        JobStatus = "done"
 	JobSkipped     JobStatus = "skipped"
 	JobFailed      JobStatus = "failed"
@@ -60,6 +60,22 @@ type Job struct {
 	Tracks  []Track          `json:"tracks"`
 }
 
+// QueueState is the queue as the frontend sees it.
+type QueueState struct {
+	Paused bool   `json:"paused"`
+	Jobs   []*Job `json:"jobs"`
+}
+
+// stopReason records why the running job's context was cancelled.
+type stopReason int
+
+const (
+	stopCancel stopReason = iota
+	stopPause
+	stopSkip
+	stopQueue // the whole queue was paused; the job goes back to the front
+)
+
 // Environment reports what the downloader needs before it can run.
 type Environment struct {
 	FFmpegPath  string `json:"ffmpegPath"`
@@ -83,9 +99,12 @@ type LogLine struct {
 
 // App is bound to the frontend.
 type App struct {
-	ctx context.Context
+	ctx   context.Context
+	store *store
 
 	mu        sync.Mutex
+	paused    bool
+	stop      stopReason
 	settings  Settings
 	env       Environment
 	jobs      []*Job
@@ -105,7 +124,20 @@ func NewApp() *App {
 // ServiceStartup runs when the Wails application starts.
 func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	a.ctx = ctx
-	a.settings = loadSettings()
+	st, err := openStore()
+	if err != nil {
+		return fmt.Errorf("opening the database: %w", err)
+	}
+	a.store = st
+	a.settings = st.loadSettings(defaultSettings())
+	if jobs, paused, err := st.loadQueue(); err == nil {
+		a.jobs, a.paused = jobs, paused
+		for _, j := range jobs {
+			if n, _ := strconv.Atoi(j.ID); n > a.nextID {
+				a.nextID = n
+			}
+		}
+	}
 	if err := downloader.Configure(a.settings.Options); err != nil {
 		a.settings.Options = downloader.DefaultOptions()
 		_ = downloader.Configure(a.settings.Options)
@@ -119,45 +151,23 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 	return nil
 }
 
-func settingsPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
+// ServiceShutdown saves the queue and closes the database.
+func (a *App) ServiceShutdown() error {
+	if a.store == nil {
+		return nil
 	}
-	return filepath.Join(dir, "crunchyroll-downloader", "settings.json"), nil
+	a.mu.Lock()
+	err := a.store.saveQueue(a.jobs, a.paused)
+	a.mu.Unlock()
+	return errors.Join(err, a.store.Close())
 }
 
-func loadSettings() Settings {
+func defaultSettings() Settings {
 	s := Settings{Options: downloader.DefaultOptions()}
 	if home, err := os.UserHomeDir(); err == nil {
 		s.Options.OutputDir = filepath.Join(home, "Videos", "Crunchyroll")
 	}
-	path, err := settingsPath()
-	if err != nil {
-		return s
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return s
-	}
-	_ = json.Unmarshal(data, &s)
 	return s
-}
-
-func (a *App) saveSettingsFile() error {
-	path, err := settingsPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(a.settings, "", "  ")
-	if err != nil {
-		return err
-	}
-	// The file holds the account cookie, so keep it private to the user.
-	return os.WriteFile(path, data, 0o600)
 }
 
 // GetSettings returns the saved settings.
@@ -181,7 +191,7 @@ func (a *App) SaveSettings(s Settings) (Environment, error) {
 	a.mu.Lock()
 	cookieChanged := s.EtpRt != a.settings.EtpRt
 	a.settings = s
-	err := a.saveSettingsFile()
+	err := a.store.saveSettings(s)
 	a.mu.Unlock()
 	if err != nil {
 		return a.Environment(), fmt.Errorf("saving settings: %w", err)
@@ -265,7 +275,7 @@ func (a *App) SeasonEpisodes(seasonID string) ([]downloader.Title, error) {
 }
 
 // Enqueue adds titles to the download queue, skipping ones already waiting.
-func (a *App) Enqueue(titles []downloader.Title) []*Job {
+func (a *App) Enqueue(titles []downloader.Title) QueueState {
 	a.mu.Lock()
 	pending := map[string]bool{}
 	for _, j := range a.jobs {
@@ -287,24 +297,125 @@ func (a *App) Enqueue(titles []downloader.Title) []*Job {
 }
 
 func isActive(s JobStatus) bool {
-	return s == JobQueued || s == JobDownloading || s == JobMerging || s == JobWaiting
+	return s == JobQueued || s == JobDownloading || s == JobMerging || s == JobWaiting || s == JobPaused
 }
 
 // Queue returns a snapshot of the download queue.
-func (a *App) Queue() []*Job {
+func (a *App) Queue() QueueState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.snapshotLocked()
 }
 
-func (a *App) snapshotLocked() []*Job {
+func (a *App) snapshotLocked() QueueState {
 	out := make([]*Job, len(a.jobs))
 	for i, j := range a.jobs {
 		c := *j
 		c.Tracks = append([]Track{}, j.Tracks...)
 		out[i] = &c
 	}
-	return out
+	return QueueState{Paused: a.paused, Jobs: out}
+}
+
+// update runs fn under the lock, then wakes the worker and publishes the queue.
+func (a *App) update(fn func()) {
+	a.mu.Lock()
+	fn()
+	a.mu.Unlock()
+	a.signal()
+	a.emitQueue(true)
+}
+
+func (a *App) findLocked(id string) (int, *Job) {
+	for i, j := range a.jobs {
+		if j.ID == id {
+			return i, j
+		}
+	}
+	return -1, nil
+}
+
+// stopCurrentLocked cancels the running job, recording why.
+func (a *App) stopCurrentLocked(why stopReason) {
+	if a.cancel != nil {
+		a.stop = why
+		a.cancel()
+	}
+}
+
+// PauseAll stops the queue. The running episode is interrupted and will start
+// over when the queue resumes.
+func (a *App) PauseAll() {
+	a.update(func() {
+		a.paused = true
+		a.stopCurrentLocked(stopQueue)
+	})
+}
+
+// ResumeAll restarts the queue.
+func (a *App) ResumeAll() {
+	a.update(func() { a.paused = false })
+}
+
+// Pause holds one job so the queue moves past it.
+func (a *App) Pause(id string) {
+	a.update(func() {
+		_, j := a.findLocked(id)
+		switch {
+		case j == nil:
+		case j == a.current:
+			a.stopCurrentLocked(stopPause)
+		case j.Status == JobQueued:
+			j.Status = JobPaused
+		}
+	})
+}
+
+// Resume puts a paused job back in the queue.
+func (a *App) Resume(id string) {
+	a.update(func() {
+		if _, j := a.findLocked(id); j != nil && j.Status == JobPaused {
+			j.Status = JobQueued
+		}
+	})
+}
+
+// Skip passes over a job without downloading it.
+func (a *App) Skip(id string) {
+	a.update(func() {
+		_, j := a.findLocked(id)
+		switch {
+		case j == nil:
+		case j == a.current:
+			a.stopCurrentLocked(stopSkip)
+		case j.Status == JobQueued || j.Status == JobPaused:
+			j.Status, j.Error = JobSkipped, "Skipped"
+		}
+	})
+}
+
+// Move shifts a job to index to in the queue.
+func (a *App) Move(id string, to int) {
+	a.update(func() {
+		i, j := a.findLocked(id)
+		if j == nil {
+			return
+		}
+		to = max(0, min(to, len(a.jobs)-1))
+		a.jobs = append(a.jobs[:i], a.jobs[i+1:]...)
+		a.jobs = append(a.jobs[:to], append([]*Job{j}, a.jobs[to:]...)...)
+	})
+}
+
+// RetryFailed re-queues every failed or cancelled job.
+func (a *App) RetryFailed() {
+	a.update(func() {
+		for _, j := range a.jobs {
+			if j.Status == JobFailed || j.Status == JobCancelled {
+				j.Status, j.Error, j.RetryAt, j.Tracks = JobQueued, "", nil, []Track{}
+			}
+		}
+	})
 }
 
 // Cancel stops a running job or drops a queued one.
@@ -314,9 +425,9 @@ func (a *App) Cancel(id string) {
 		if j.ID != id {
 			continue
 		}
-		if j == a.current && a.cancel != nil {
-			a.cancel()
-		} else if j.Status == JobQueued {
+		if j == a.current {
+			a.stopCurrentLocked(stopCancel)
+		} else if j.Status == JobQueued || j.Status == JobPaused {
 			j.Status = JobCancelled
 		}
 	}
@@ -384,7 +495,7 @@ func (a *App) worker() {
 		a.mu.Lock()
 		var job *Job
 		for _, j := range a.jobs {
-			if j.Status == JobQueued {
+			if j.Status == JobQueued && !a.paused {
 				job = j
 				break
 			}
@@ -395,7 +506,7 @@ func (a *App) worker() {
 			continue
 		}
 		ctx, cancel := context.WithCancel(a.ctx)
-		a.current, a.cancel = job, cancel
+		a.current, a.cancel, a.stop = job, cancel, stopCancel
 		job.Status, job.Error = JobDownloading, ""
 		a.mu.Unlock()
 		a.emitQueue(true)
@@ -405,7 +516,16 @@ func (a *App) worker() {
 		a.mu.Lock()
 		switch {
 		case ctx.Err() != nil:
-			job.Status = JobCancelled
+			switch a.stop {
+			case stopPause:
+				job.Status = JobPaused
+			case stopSkip:
+				job.Status, job.Error = JobSkipped, "Skipped"
+			case stopQueue:
+				job.Status, job.Error = JobQueued, ""
+			default:
+				job.Status = JobCancelled
+			}
 		case err != nil:
 			job.Status, job.Error = JobFailed, err.Error()
 		case job.Status != JobSkipped:
@@ -486,14 +606,21 @@ func (a *App) emitQueue(force bool) {
 		if a.emitTimer == nil {
 			a.emitTimer = time.AfterFunc(100*time.Millisecond, func() {
 				a.mu.Lock()
+				defer a.mu.Unlock()
 				a.emitTimer = nil
-				a.mu.Unlock()
-				a.emitQueue(true)
+				a.lastEmit = time.Now()
+				application.Get().Event.Emit("queue", a.snapshotLocked())
 			})
 		}
 		return
 	}
 	a.lastEmit = time.Now()
+	// Progress-only updates aren't worth a write; everything else is saved.
+	if force && a.store != nil {
+		if err := a.store.saveQueue(a.jobs, a.paused); err != nil {
+			go a.onLog("Couldn't save the queue: " + err.Error())
+		}
+	}
 	application.Get().Event.Emit("queue", a.snapshotLocked())
 }
 

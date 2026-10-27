@@ -1,11 +1,41 @@
 import { useEffect, useState } from "react"
-import { FolderOpenIcon, RotateCwIcon, XIcon } from "lucide-react"
+import {
+  ArrowDownIcon,
+  ArrowDownToLineIcon,
+  ArrowUpIcon,
+  ArrowUpToLineIcon,
+  ExternalLinkIcon,
+  FolderOpenIcon,
+  PauseIcon,
+  PlayIcon,
+  RotateCwIcon,
+  SkipForwardIcon,
+  XIcon,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { episodeLink } from "@/components/title-cards"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { useBackend } from "@/hooks/use-backend"
-import { api, episodeCode, type Job, type JobStatus, type Track } from "@/lib/api"
+import {
+  api,
+  episodeCode,
+  type Job,
+  type JobStatus,
+  type Track,
+} from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 const STATUS: Record<JobStatus, { label: string; className: string }> = {
@@ -13,6 +43,7 @@ const STATUS: Record<JobStatus, { label: string; className: string }> = {
   downloading: { label: "Downloading", className: "text-primary" },
   merging: { label: "Merging tracks", className: "text-primary" },
   waiting: { label: "Rate-limited", className: "text-amber-300" },
+  paused: { label: "Paused", className: "text-select" },
   done: { label: "Saved", className: "text-emerald-400" },
   skipped: { label: "Already saved", className: "text-muted-foreground" },
   failed: { label: "Failed", className: "text-destructive" },
@@ -20,28 +51,66 @@ const STATUS: Record<JobStatus, { label: string; className: string }> = {
 }
 
 export function QueueView({ onBrowse }: { onBrowse: () => void }) {
-  const { jobs } = useBackend()
-  const finished = jobs.filter((j) => ["done", "skipped", "failed", "cancelled"].includes(j.status))
+  const { jobs, paused } = useBackend()
+  const finished = jobs.filter((j) =>
+    ["done", "skipped", "failed", "cancelled"].includes(j.status)
+  )
+  const retryable = jobs.filter(
+    (j) => j.status === "failed" || j.status === "cancelled"
+  ).length
+  const pending = jobs.some((j) => ACTIVE.includes(j.status))
 
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-end justify-between border-b px-8 pt-7 pb-5">
         <div>
-          <h1 className="font-heading text-3xl leading-none font-bold tracking-tight">Queue</h1>
+          <h1 className="font-heading text-3xl leading-none font-bold tracking-tight">
+            Queue
+          </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Episodes download one at a time, in the order you added them.
+            {paused
+              ? "Paused. Nothing new starts until you resume."
+              : "Episodes download one at a time, in order. Right-click one to reorder it."}
           </p>
         </div>
-        {finished.length > 0 && (
-          <Button variant="outline" size="sm" onClick={() => void api.ClearFinished()}>
-            Clear finished
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {retryable > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void api.RetryFailed()}
+            >
+              <RotateCwIcon />
+              Retry {retryable} failed
+            </Button>
+          )}
+          {finished.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void api.ClearFinished()}
+            >
+              Clear finished
+            </Button>
+          )}
+          {(paused || pending) && (
+            <Button
+              size="sm"
+              variant={paused ? "default" : "outline"}
+              onClick={() => void (paused ? api.ResumeAll() : api.PauseAll())}
+            >
+              {paused ? <PlayIcon /> : <PauseIcon />}
+              {paused ? "Resume queue" : "Pause queue"}
+            </Button>
+          )}
+        </div>
       </header>
       <ScrollArea className="min-h-0 flex-1">
         {jobs.length === 0 ? (
           <div className="max-w-md px-8 pt-16">
-            <p className="font-heading text-2xl font-semibold">Nothing queued yet.</p>
+            <p className="font-heading text-2xl font-semibold">
+              Nothing queued yet.
+            </p>
             <p className="mt-2 text-sm text-muted-foreground">
               Look up a series or episode and choose what to download.
             </p>
@@ -51,8 +120,8 @@ export function QueueView({ onBrowse }: { onBrowse: () => void }) {
           </div>
         ) : (
           <ol className="divide-y px-8">
-            {jobs.map((job) => (
-              <JobRow key={job.id} job={job} />
+            {jobs.map((job, i) => (
+              <JobRow key={job.id} job={job} index={i} last={jobs.length - 1} />
             ))}
           </ol>
         )}
@@ -61,53 +130,78 @@ export function QueueView({ onBrowse }: { onBrowse: () => void }) {
   )
 }
 
-function JobRow({ job }: { job: Job }) {
+function JobRow({
+  job,
+  index,
+  last,
+}: {
+  job: Job
+  index: number
+  last: number
+}) {
   const t = job.title
   const status = STATUS[job.status]
-  const running = job.status === "downloading" || job.status === "merging" || job.status === "waiting"
+  const running =
+    job.status === "downloading" ||
+    job.status === "merging" ||
+    job.status === "waiting"
 
   return (
-    <li className="flex gap-5 py-4">
-      <div className="relative aspect-video w-36 shrink-0 overflow-hidden rounded-md bg-muted">
-        {t.thumbnail && <img src={t.thumbnail} alt="" className="size-full object-cover" />}
-        <span className="absolute bottom-0.5 left-2 font-heading text-2xl leading-none font-extrabold text-foreground drop-shadow-[0_1px_6px_rgb(0_0_0/0.7)] tabular-nums">
-          {t.number}
-        </span>
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="truncate font-medium">{t.title}</div>
-            <div className="mt-0.5 truncate text-sm text-muted-foreground">
-              {t.seriesTitle}, {episodeCode(t)}
+    <ContextMenu>
+      <ContextMenuTrigger render={<li className="flex gap-5 py-4" />}>
+        <div className="relative aspect-video w-36 shrink-0 overflow-hidden rounded-md bg-muted">
+          {t.thumbnail && (
+            <img src={t.thumbnail} alt="" className="size-full object-cover" />
+          )}
+          <span className="absolute bottom-0.5 left-2 font-heading text-2xl leading-none font-extrabold text-foreground tabular-nums drop-shadow-[0_1px_6px_rgb(0_0_0/0.7)]">
+            {t.number}
+          </span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-medium">{t.title}</div>
+              <div className="mt-0.5 truncate text-sm text-muted-foreground">
+                {t.seriesTitle}, {episodeCode(t)}
+              </div>
             </div>
+            <Actions job={job} />
           </div>
-          <Actions job={job} />
-        </div>
 
-        <div className={cn("mt-2 text-sm", status.className)}>
-          {job.status === "waiting" && job.retryAt ? <RetryCountdown at={job.retryAt} /> : status.label}
-        </div>
-
-        {job.error && job.status !== "waiting" && (
-          <p className="mt-1 line-clamp-3 text-xs text-destructive/90 selectable">{job.error}</p>
-        )}
-
-        {running && (job.tracks?.length ?? 0) > 0 && (
-          <div className="mt-3 flex flex-col gap-2.5">
-            {(job.tracks ?? []).map((tr) => (
-              <TrackBar key={tr.id} track={tr} />
-            ))}
+          <div className={cn("mt-2 text-sm", status.className)}>
+            {job.status === "waiting" && job.retryAt ? (
+              <RetryCountdown at={job.retryAt} />
+            ) : (
+              status.label
+            )}
           </div>
-        )}
-        {job.status === "merging" && <div className="mt-3 h-1 w-full animate-pulse rounded-full bg-primary/40" />}
-      </div>
-    </li>
+
+          {job.error && job.status !== "waiting" && (
+            <p className="selectable mt-1 line-clamp-3 text-xs text-destructive/90">
+              {job.error}
+            </p>
+          )}
+
+          {running && (job.tracks?.length ?? 0) > 0 && (
+            <div className="mt-3 flex flex-col gap-2.5">
+              {(job.tracks ?? []).map((tr) => (
+                <TrackBar key={tr.id} track={tr} />
+              ))}
+            </div>
+          )}
+          {job.status === "merging" && (
+            <div className="mt-3 h-1 w-full animate-pulse rounded-full bg-primary/40" />
+          )}
+        </div>
+      </ContextMenuTrigger>
+      <JobMenu job={job} index={index} last={last} />
+    </ContextMenu>
   )
 }
 
 function TrackBar({ track }: { track: Track }) {
-  const pct = track.total > 0 ? Math.min(100, (track.current / track.total) * 100) : null
+  const pct =
+    track.total > 0 ? Math.min(100, (track.current / track.total) * 100) : null
   const name = track.title.replace(/^Downloading /, "")
   return (
     <div>
@@ -120,7 +214,10 @@ function TrackBar({ track }: { track: Track }) {
       </div>
       <div className="h-1 overflow-hidden rounded-full bg-muted">
         <div
-          className={cn("h-full rounded-full bg-primary transition-[width] duration-200", pct === null && "w-1/3 animate-pulse")}
+          className={cn(
+            "h-full rounded-full bg-primary transition-[width] duration-200",
+            pct === null && "w-1/3 animate-pulse"
+          )}
           style={pct !== null ? { width: `${pct}%` } : undefined}
         />
       </div>
@@ -128,34 +225,158 @@ function TrackBar({ track }: { track: Track }) {
   )
 }
 
+const ACTIVE: JobStatus[] = [
+  "queued",
+  "downloading",
+  "merging",
+  "waiting",
+  "paused",
+]
+const RUNNING: JobStatus[] = ["downloading", "merging", "waiting"]
+
+/** The controls a job offers, shared by the row buttons and its context menu. */
+function jobActions(job: Job) {
+  const active = ACTIVE.includes(job.status)
+  const finished = job.status === "done" || job.status === "skipped"
+  return {
+    active,
+    reveal: finished && !!job.output,
+    retry: job.status === "failed" || job.status === "cancelled",
+    resume: job.status === "paused",
+    pause: job.status === "queued" || RUNNING.includes(job.status),
+    skip: active,
+    close: () => void (active ? api.Cancel(job.id) : api.Remove(job.id)),
+    closeLabel: active ? "Cancel" : "Remove from list",
+  }
+}
+
 function Actions({ job }: { job: Job }) {
-  const active = ["queued", "downloading", "merging", "waiting"].includes(job.status)
+  const a = jobActions(job)
   return (
     <div className="flex shrink-0 gap-1">
-      {job.output && (job.status === "done" || job.status === "skipped") && (
-        <IconAction label="Show in folder" onClick={() => void api.Reveal(job.output!)}>
+      {a.reveal && (
+        <IconAction
+          label="Show in folder"
+          onClick={() => void api.Reveal(job.output!)}
+        >
           <FolderOpenIcon />
         </IconAction>
       )}
-      {(job.status === "failed" || job.status === "cancelled") && (
+      {a.retry && (
         <IconAction label="Try again" onClick={() => void api.Retry(job.id)}>
           <RotateCwIcon />
         </IconAction>
       )}
-      <IconAction
-        label={active ? "Cancel" : "Remove from list"}
-        onClick={() => void (active ? api.Cancel(job.id) : api.Remove(job.id))}
-      >
+      {a.resume && (
+        <IconAction label="Resume" onClick={() => void api.Resume(job.id)}>
+          <PlayIcon />
+        </IconAction>
+      )}
+      {a.pause && (
+        <IconAction label="Pause" onClick={() => void api.Pause(job.id)}>
+          <PauseIcon />
+        </IconAction>
+      )}
+      {a.skip && (
+        <IconAction label="Skip" onClick={() => void api.Skip(job.id)}>
+          <SkipForwardIcon />
+        </IconAction>
+      )}
+      <IconAction label={a.closeLabel} onClick={a.close}>
         <XIcon />
       </IconAction>
     </div>
   )
 }
 
-function IconAction({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+function JobMenu({
+  job,
+  index,
+  last,
+}: {
+  job: Job
+  index: number
+  last: number
+}) {
+  const a = jobActions(job)
+  const move = (to: number) => void api.Move(job.id, to)
+  return (
+    <ContextMenuContent className="min-w-48">
+      {a.resume && (
+        <ContextMenuItem onClick={() => void api.Resume(job.id)}>
+          <PlayIcon /> Resume
+        </ContextMenuItem>
+      )}
+      {a.pause && (
+        <ContextMenuItem onClick={() => void api.Pause(job.id)}>
+          <PauseIcon /> Pause
+        </ContextMenuItem>
+      )}
+      {a.skip && (
+        <ContextMenuItem onClick={() => void api.Skip(job.id)}>
+          <SkipForwardIcon /> Skip
+        </ContextMenuItem>
+      )}
+      {a.retry && (
+        <ContextMenuItem onClick={() => void api.Retry(job.id)}>
+          <RotateCwIcon /> Try again
+        </ContextMenuItem>
+      )}
+      {a.reveal && (
+        <ContextMenuItem onClick={() => void api.Reveal(job.output!)}>
+          <FolderOpenIcon /> Show in folder
+        </ContextMenuItem>
+      )}
+      <ContextMenuSeparator />
+      <ContextMenuItem disabled={index === 0} onClick={() => move(0)}>
+        <ArrowUpToLineIcon /> Move to top
+      </ContextMenuItem>
+      <ContextMenuItem disabled={index === 0} onClick={() => move(index - 1)}>
+        <ArrowUpIcon /> Move up
+      </ContextMenuItem>
+      <ContextMenuItem
+        disabled={index === last}
+        onClick={() => move(index + 1)}
+      >
+        <ArrowDownIcon /> Move down
+      </ContextMenuItem>
+      <ContextMenuItem disabled={index === last} onClick={() => move(last)}>
+        <ArrowDownToLineIcon /> Move to bottom
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem
+        onClick={() => void api.OpenURL(episodeLink(job.title.id))}
+      >
+        <ExternalLinkIcon /> Open on Crunchyroll
+      </ContextMenuItem>
+      <ContextMenuItem variant="destructive" onClick={a.close}>
+        <XIcon /> {a.closeLabel}
+      </ContextMenuItem>
+    </ContextMenuContent>
+  )
+}
+
+function IconAction({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: React.ReactNode
+}) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label={label} onClick={onClick} />}>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={label}
+            onClick={onClick}
+          />
+        }
+      >
         {children}
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
@@ -172,7 +393,11 @@ function RetryCountdown({ at }: { at: string }) {
   const secs = Math.max(0, Math.round((new Date(at).getTime() - now) / 1000))
   const m = Math.floor(secs / 60)
   const s = secs % 60
-  return <>Rate-limited by Crunchyroll, retrying in {m > 0 ? `${m}m ${s}s` : `${s}s`}</>
+  return (
+    <>
+      Rate-limited by Crunchyroll, retrying in {m > 0 ? `${m}m ${s}s` : `${s}s`}
+    </>
+  )
 }
 
 function formatBytes(n: number) {

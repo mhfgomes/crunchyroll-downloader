@@ -56,7 +56,7 @@ export function DefaultOptions(): $CancellablePromise<downloader$0.Options> {
 /**
  * Enqueue adds titles to the download queue, skipping ones already waiting.
  */
-export function Enqueue(titles: downloader$0.Title[] | null): $CancellablePromise<($models.Job | null)[] | null> {
+export function Enqueue(titles: downloader$0.Title[] | null): $CancellablePromise<$models.QueueState> {
     return $Call.ByID(2200678053, titles);
 }
 
@@ -96,10 +96,32 @@ export function Lookup(url: string): $CancellablePromise<downloader$0.LookupResu
 }
 
 /**
+ * Move shifts a job to index to in the queue.
+ */
+export function Move(id: string, to: number): $CancellablePromise<void> {
+    return $Call.ByID(3559537436, id, to);
+}
+
+/**
  * OpenURL opens a link in the default browser.
  */
 export function OpenURL(url: string): $CancellablePromise<void> {
     return $Call.ByID(3584934946, url);
+}
+
+/**
+ * Pause holds one job so the queue moves past it.
+ */
+export function Pause(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1037007909, id);
+}
+
+/**
+ * PauseAll stops the queue. The running episode is interrupted and will start
+ * over when the queue resumes.
+ */
+export function PauseAll(): $CancellablePromise<void> {
+    return $Call.ByID(2358272772);
 }
 
 /**
@@ -119,7 +141,7 @@ export function PickFile(title: string, current: string, pattern: string): $Canc
 /**
  * Queue returns a snapshot of the download queue.
  */
-export function Queue(): $CancellablePromise<($models.Job | null)[] | null> {
+export function Queue(): $CancellablePromise<$models.QueueState> {
     return $Call.ByID(2636395120);
 }
 
@@ -131,10 +153,31 @@ export function Remove(id: string): $CancellablePromise<void> {
 }
 
 /**
+ * Resume puts a paused job back in the queue.
+ */
+export function Resume(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2476070530, id);
+}
+
+/**
+ * ResumeAll restarts the queue.
+ */
+export function ResumeAll(): $CancellablePromise<void> {
+    return $Call.ByID(2857039705);
+}
+
+/**
  * Retry re-queues a failed or cancelled job.
  */
 export function Retry(id: string): $CancellablePromise<void> {
     return $Call.ByID(1182829889, id);
+}
+
+/**
+ * RetryFailed re-queues every failed or cancelled job.
+ */
+export function RetryFailed(): $CancellablePromise<void> {
+    return $Call.ByID(113592032);
 }
 
 /**
@@ -164,4 +207,11 @@ export function Search(query: string): $CancellablePromise<downloader$0.SearchRe
  */
 export function SeasonEpisodes(seasonID: string): $CancellablePromise<downloader$0.Title[] | null> {
     return $Call.ByID(939000366, seasonID);
+}
+
+/**
+ * Skip passes over a job without downloading it.
+ */
+export function Skip(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1038591082, id);
 }

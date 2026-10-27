@@ -8,6 +8,7 @@ import {
   type Job,
   type Language,
   type LogLine,
+  type QueueState,
   type Settings,
 } from "@/lib/api"
 
@@ -18,6 +19,7 @@ export type Backend = {
   languages: Language[]
   languageName: (code: string) => string
   jobs: Job[]
+  paused: boolean
   logs: LogLine[]
   checking: boolean
   recheck: () => Promise<void>
@@ -37,11 +39,16 @@ export function useBackendState(): Backend {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [languages, setLanguages] = useState<Language[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
+  const [paused, setPaused] = useState(false)
   const [logs, setLogs] = useState<LogLine[]>([])
   const [checking, setChecking] = useState(true)
 
   useEffect(() => {
-    const offQueue = onQueue((q) => setJobs(q ?? []))
+    const applyQueue = (q: QueueState | null) => {
+      setJobs(q?.jobs ?? [])
+      setPaused(q?.paused ?? false)
+    }
+    const offQueue = onQueue(applyQueue)
     const offLog = onLog((line) =>
       setLogs((prev) => {
         const next = prev.length >= 2000 ? prev.slice(-1999) : prev.slice()
@@ -58,7 +65,7 @@ export function useBackendState(): Backend {
       ])
       setSettings(s)
       setLanguages(langs ?? [])
-      setJobs((q ?? []) as Job[])
+      applyQueue(q as QueueState | null)
       setLogs(l ?? [])
       setEnv(await api.CheckEnvironment())
       setChecking(false)
@@ -78,6 +85,7 @@ export function useBackendState(): Backend {
       languages,
       languageName: (code) => names.get(code) ?? code,
       jobs,
+      paused,
       logs,
       checking,
       recheck: async () => {
@@ -95,5 +103,5 @@ export function useBackendState(): Backend {
         return next
       },
     }
-  }, [env, settings, languages, jobs, logs, checking])
+  }, [env, settings, languages, jobs, paused, logs, checking])
 }

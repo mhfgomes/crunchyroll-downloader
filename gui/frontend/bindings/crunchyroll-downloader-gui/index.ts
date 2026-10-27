@@ -15,6 +15,7 @@ export type {
     Job,
     Language,
     LogLine,
+    QueueState,
     Settings,
     Track
 } from "./models.js";

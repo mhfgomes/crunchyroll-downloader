@@ -42,6 +42,7 @@ export enum JobStatus {
     JobDownloading = "downloading",
     JobMerging = "merging",
     JobWaiting = "waiting",
+    JobPaused = "paused",
     JobDone = "done",
     JobSkipped = "skipped",
     JobFailed = "failed",
@@ -62,6 +63,14 @@ export interface Language {
 export interface LogLine {
     "time": string;
     "text": string;
+}
+
+/**
+ * QueueState is the queue as the frontend sees it.
+ */
+export interface QueueState {
+    "paused": boolean;
+    "jobs": (Job | null)[] | null;
 }
 
 /**
