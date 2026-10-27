@@ -210,6 +210,15 @@ export function SeasonEpisodes(seasonID: string): $CancellablePromise<downloader
 }
 
 /**
+ * SetJobAccount changes which account a job that isn't running downloads
+ * with. An empty accountID leaves the choice to the mixer, or to the active
+ * account when the mixer is off.
+ */
+export function SetJobAccount(id: string, accountID: string): $CancellablePromise<void> {
+    return $Call.ByID(3953413309, id, accountID);
+}
+
+/**
  * Skip passes over a job without downloading it.
  */
 export function Skip(id: string): $CancellablePromise<void> {
@@ -223,4 +232,12 @@ export function Skip(id: string): $CancellablePromise<void> {
  */
 export function SortPending(by: string): $CancellablePromise<void> {
     return $Call.ByID(78119712, by);
+}
+
+/**
+ * SwitchAccount makes id the active account, which new jobs are queued with,
+ * and signs in with it.
+ */
+export function SwitchAccount(id: string): $CancellablePromise<$models.Environment> {
+    return $Call.ByID(3396723464, id);
 }

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react"
-import { EyeIcon, EyeOffIcon, FolderIcon, Loader2Icon } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { CheckIcon, EyeIcon, EyeOffIcon, FolderIcon, Loader2Icon, PlusIcon, Trash2Icon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch"
 import { LangPicker } from "@/components/lang-picker"
 import { NumberStepper } from "@/components/number-stepper"
 import { useBackend } from "@/hooks/use-backend"
-import { api, errorMessage, NS_PER_SECOND, type Settings } from "@/lib/api"
+import { api, errorMessage, NS_PER_SECOND, type Account, type Settings } from "@/lib/api"
 
 const VIDEO_QUALITIES = ["1080p", "720p", "480p", "360p", "240p"]
 const AUDIO_QUALITIES = ["192k", "128k", "96k"]
@@ -19,10 +19,13 @@ export function SettingsView() {
   const { settings, save, env } = useBackend()
   const [draft, setDraft] = useState<Settings | null>(settings)
   const [saving, setSaving] = useState(false)
-  const [showCookie, setShowCookie] = useState(false)
+  const synced = useRef(settings)
 
+  // Follow outside changes, like switching account from the sidebar, unless
+  // there are unsaved edits.
   useEffect(() => {
-    if (settings && !draft) setDraft(settings)
+    if (settings && (!draft || JSON.stringify(draft) === JSON.stringify(synced.current))) setDraft(settings)
+    synced.current = settings
   }, [settings, draft])
 
   if (!draft) return null
@@ -77,35 +80,16 @@ export function SettingsView() {
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="max-w-3xl px-8 pb-16">
-          <Section title="Account" description="The downloader signs in with your browser's Crunchyroll session cookie.">
-            <Row
-              label="etp_rt cookie"
-              hint={
-                <>
-                  Sign in on crunchyroll.com, open developer tools (Ctrl+Shift+I), then go to Application, Cookies and copy
-                  the value of etp_rt.
-                  {env?.loginError && <span className="mt-1 block text-destructive">{env.loginError}</span>}
-                </>
-              }
-            >
-              <div className="flex gap-2">
-                <Input
-                  type={showCookie ? "text" : "password"}
-                  value={draft.etpRt}
-                  onChange={(e) => set({ etpRt: e.target.value.trim() })}
-                  placeholder="Paste the cookie value"
-                  spellCheck={false}
-                />
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label={showCookie ? "Hide cookie" : "Show cookie"}
-                  onClick={() => setShowCookie(!showCookie)}
-                >
-                  {showCookie ? <EyeOffIcon /> : <EyeIcon />}
-                </Button>
-              </div>
-            </Row>
+          <Section
+            title="Accounts"
+            description="The downloader signs in with your browser's Crunchyroll session cookie. New episodes are queued with the active account."
+          >
+            <AccountsEditor
+              accounts={draft.accounts ?? []}
+              active={draft.activeAccount}
+              loginError={env?.loginError}
+              onChange={(accounts, activeAccount) => set({ accounts, activeAccount })}
+            />
           </Section>
 
           <Section title="Languages" description="The first language in each list becomes the default track in the file.">
@@ -179,6 +163,16 @@ export function SettingsView() {
           </Section>
 
           <Section title="Rate limits" description="Crunchyroll limits how many streams an account can open, and how quickly.">
+            <Row
+              label="Account mixer"
+              hint={
+                (draft.accounts ?? []).filter((a) => a.etpRt).length > 1
+                  ? "Spreads episodes over every account, each resting for the pause below after an episode. A rate-limited account is benched and the episode moves on to the next rested one."
+                  : "Add a second account to spread episodes over accounts and avoid rate limits."
+              }
+            >
+              <Switch checked={draft.mixer} onCheckedChange={(v) => set({ mixer: v })} />
+            </Row>
             <Row label="Simultaneous streams" hint="Keep this within your plan's stream limit.">
               <NumberStepper
                 label="simultaneous streams"
@@ -188,7 +182,14 @@ export function SettingsView() {
                 onChange={(v) => setOpt({ simultaneous: v })}
               />
             </Row>
-            <Row label="Pause between episodes" hint="How long to wait before starting the next episode.">
+            <Row
+              label="Pause between episodes"
+              hint={
+                draft.mixer
+                  ? "With the mixer on, how long each account rests after an episode."
+                  : "How long to wait before starting the next episode."
+              }
+            >
               <DurationField
                 label="pause between episodes"
                 seconds={Math.round(o.downloadDelay / NS_PER_SECOND)}
@@ -201,6 +202,121 @@ export function SettingsView() {
           </Section>
         </div>
       </ScrollArea>
+    </div>
+  )
+}
+
+function AccountsEditor({
+  accounts,
+  active,
+  loginError,
+  onChange,
+}: {
+  accounts: Account[]
+  active: string
+  loginError?: string
+  onChange: (accounts: Account[], active: string) => void
+}) {
+  const update = (id: string, patch: Partial<Account>) =>
+    onChange(
+      accounts.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+      active
+    )
+  const add = () => {
+    const id = String(Math.max(0, ...accounts.map((a) => Number(a.id) || 0)) + 1)
+    onChange([...accounts, { id, name: `Account ${accounts.length + 1}`, etpRt: "" }], active || id)
+  }
+  const remove = (id: string) => {
+    const rest = accounts.filter((a) => a.id !== id)
+    onChange(rest, active === id ? (rest[0]?.id ?? "") : active)
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {accounts.map((acc) => (
+        <AccountRow
+          key={acc.id}
+          account={acc}
+          active={acc.id === active}
+          error={acc.id === active ? loginError : undefined}
+          onChange={(patch) => update(acc.id, patch)}
+          onActivate={() => onChange(accounts, acc.id)}
+          onRemove={() => remove(acc.id)}
+        />
+      ))}
+      {accounts.length === 0 && loginError && <p className="text-xs text-destructive">{loginError}</p>}
+      <div>
+        <Button variant="outline" onClick={add}>
+          <PlusIcon /> Add account
+        </Button>
+      </div>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        To get a cookie, sign in on crunchyroll.com, open developer tools (Ctrl+Shift+I), then go to Application, Cookies
+        and copy the value of etp_rt. Use a private window for each extra account, so signing in doesn't replace the
+        other account's cookie.
+      </p>
+    </div>
+  )
+}
+
+function AccountRow({
+  account,
+  active,
+  error,
+  onChange,
+  onActivate,
+  onRemove,
+}: {
+  account: Account
+  active: boolean
+  error?: string
+  onChange: (patch: Partial<Account>) => void
+  onActivate: () => void
+  onRemove: () => void
+}) {
+  const [showCookie, setShowCookie] = useState(false)
+  return (
+    <div className="rounded-lg border bg-card/50 p-3">
+      <div className="flex gap-2">
+        <Input
+          className="w-44 shrink-0"
+          value={account.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder="Name"
+          aria-label="Account name"
+        />
+        <Input
+          type={showCookie ? "text" : "password"}
+          value={account.etpRt}
+          onChange={(e) => onChange({ etpRt: e.target.value.trim() })}
+          placeholder="Paste the etp_rt cookie value"
+          aria-label="etp_rt cookie"
+          spellCheck={false}
+        />
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label={showCookie ? "Hide cookie" : "Show cookie"}
+          onClick={() => setShowCookie(!showCookie)}
+        >
+          {showCookie ? <EyeOffIcon /> : <EyeIcon />}
+        </Button>
+        <Button variant="ghost" size="icon" aria-label="Remove account" onClick={onRemove}>
+          <Trash2Icon />
+        </Button>
+      </div>
+      <div className="mt-2 flex items-center gap-2 text-xs">
+        {active ? (
+          <span className="flex items-center gap-1 text-emerald-400">
+            <CheckIcon className="size-3.5" /> Active
+          </span>
+        ) : (
+          <Button variant="link" size="xs" className="h-auto px-0" onClick={onActivate}>
+            Make active
+          </Button>
+        )}
+        {error && <span className="text-destructive">{error}</span>}
+      </div>
     </div>
   )
 }

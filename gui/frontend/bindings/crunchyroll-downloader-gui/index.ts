@@ -11,6 +11,8 @@ export {
 } from "./models.js";
 
 export type {
+    Account,
+    AccountStatus,
     Environment,
     Job,
     Language,

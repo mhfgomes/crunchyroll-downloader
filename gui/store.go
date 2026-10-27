@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -30,6 +31,12 @@ CREATE TABLE IF NOT EXISTS jobs (
 	error    TEXT NOT NULL DEFAULT '',
 	output   TEXT NOT NULL DEFAULT ''
 );`
+
+// migrations add columns to databases created by earlier versions. Each fails
+// harmlessly once its column exists.
+var migrations = []string{
+	`ALTER TABLE jobs ADD COLUMN account TEXT NOT NULL DEFAULT ''`,
+}
 
 func configDir() (string, error) {
 	dir, err := os.UserConfigDir()
@@ -57,7 +64,10 @@ func openStore() (*store, error) {
 		db.Close()
 		return nil, err
 	}
-	// The database holds the account cookie, so keep it private to the user.
+	for _, m := range migrations {
+		_, _ = db.Exec(m)
+	}
+	// The database holds the account cookies, so keep it private to the user.
 	_ = os.Chmod(path, 0o600)
 	return &store{db: db}, nil
 }
@@ -109,13 +119,43 @@ func (s *store) loadSettings(defaults Settings) Settings {
 
 func (s *store) saveSettings(v Settings) error { return s.put("settings", v) }
 
+// savedAccountState is accountState as stored in the database.
+type savedAccountState struct {
+	ReadyAt  time.Time `json:"readyAt"`
+	LastUsed time.Time `json:"lastUsed"`
+	Hits     int       `json:"hits"`
+	Reason   string    `json:"reason,omitempty"`
+}
+
+// loadAccountState restores the mixer's per-account rests and cooldowns, so a
+// restart doesn't put a rate-limited account straight back to work.
+func (s *store) loadAccountState() (map[string]*accountState, error) {
+	saved := map[string]savedAccountState{}
+	if _, err := s.get("accountState", &saved); err != nil {
+		return nil, err
+	}
+	out := make(map[string]*accountState, len(saved))
+	for id, v := range saved {
+		out[id] = &accountState{readyAt: v.ReadyAt, lastUsed: v.LastUsed, hits: v.Hits, reason: v.Reason}
+	}
+	return out, nil
+}
+
+func (s *store) saveAccountState(state map[string]*accountState) error {
+	saved := make(map[string]savedAccountState, len(state))
+	for id, v := range state {
+		saved[id] = savedAccountState{ReadyAt: v.readyAt, LastUsed: v.lastUsed, Hits: v.hits, Reason: v.reason}
+	}
+	return s.put("accountState", saved)
+}
+
 // loadQueue restores the saved jobs. Jobs that were mid-download when the app
 // closed go back to the queue.
 func (s *store) loadQueue() (jobs []*Job, paused bool, err error) {
 	if _, err := s.get("paused", &paused); err != nil {
 		return nil, false, err
 	}
-	rows, err := s.db.Query(`SELECT id, title, status, error, output FROM jobs ORDER BY position`)
+	rows, err := s.db.Query(`SELECT id, title, status, error, output, account FROM jobs ORDER BY position`)
 	if err != nil {
 		return nil, false, err
 	}
@@ -126,7 +166,7 @@ func (s *store) loadQueue() (jobs []*Job, paused bool, err error) {
 			title string
 			j     = &Job{Tracks: []Track{}}
 		)
-		if err := rows.Scan(&id, &title, &j.Status, &j.Error, &j.Output); err != nil {
+		if err := rows.Scan(&id, &title, &j.Status, &j.Error, &j.Output, &j.AccountID); err != nil {
 			return nil, false, err
 		}
 		if err := json.Unmarshal([]byte(title), &j.Title); err != nil {
@@ -151,7 +191,7 @@ func (s *store) saveQueue(jobs []*Job, paused bool) error {
 	if _, err := tx.Exec(`DELETE FROM jobs`); err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO jobs (id, position, title, status, error, output) VALUES (?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT INTO jobs (id, position, title, status, error, output, account) VALUES (?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -161,7 +201,7 @@ func (s *store) saveQueue(jobs []*Job, paused bool) error {
 		if err != nil {
 			return err
 		}
-		if _, err := stmt.Exec(j.ID, i, string(title), j.Status, j.Error, j.Output); err != nil {
+		if _, err := stmt.Exec(j.ID, i, string(title), j.Status, j.Error, j.Output, j.AccountID); err != nil {
 			return err
 		}
 	}

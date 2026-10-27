@@ -486,7 +486,29 @@ func DownloadTitle(ctx context.Context, t Title) (err error) {
 	defer begin(ctx)()
 	defer recoverErr(&err)
 	langs := selectLangs()
-	info := EpisodeInfo{
+	return downloadEpisodeWithRetry(t.ID, titleInfo(t), langs.audio, langs.subs, langs.cc, &options.VideoQuality, &options.AudioQuality, options.OutputDir)
+}
+
+// DownloadTitleOnce downloads one episode without waiting out rate limits:
+// an error wrapping ErrRateLimited or ErrActiveStreams is returned straight
+// away, so the caller can retry with another account.
+func DownloadTitleOnce(ctx context.Context, t Title) (err error) {
+	defer begin(ctx)()
+	defer recoverErr(&err)
+	langs := selectLangs()
+	info := titleInfo(t)
+	err = downloadEpisode(t.ID, info, langs.audio, langs.subs, langs.cc, &options.VideoQuality, &options.AudioQuality, options.OutputDir)
+	if ctxErr := runContext().Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if err != nil && !errors.Is(err, ErrRateLimited) && !errors.Is(err, ErrActiveStreams) {
+		return failEpisode(t.ID, info, err)
+	}
+	return err
+}
+
+func titleInfo(t Title) EpisodeInfo {
+	return EpisodeInfo{
 		EpisodeMetadata: EpisodeMetadata{
 			SeriesTitle:        t.SeriesTitle,
 			SeasonNumber:       t.Season,
@@ -497,5 +519,4 @@ func DownloadTitle(ctx context.Context, t Title) (err error) {
 		},
 		Title: t.Title,
 	}
-	return downloadEpisodeWithRetry(t.ID, info, langs.audio, langs.subs, langs.cc, &options.VideoQuality, &options.AudioQuality, options.OutputDir)
 }

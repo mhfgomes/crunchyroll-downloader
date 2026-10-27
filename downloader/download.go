@@ -719,11 +719,7 @@ func downloadEpisodeWithRetry(baseContentId string, info EpisodeInfo, audioLangs
 			err = ctxErr
 		}
 		if !errors.Is(err, ErrRateLimited) {
-			logf("! %v", err)
-			ev := episodeEvent(baseContentId, info, StatusFailed)
-			ev.Error = err.Error()
-			emitEpisode(ev)
-			return err
+			return failEpisode(baseContentId, info, err)
 		}
 
 		wait := backoff.rateLimitWait()
@@ -735,6 +731,15 @@ func downloadEpisodeWithRetry(baseContentId string, info EpisodeInfo, audioLangs
 		emitEpisode(ev)
 		sleepCtx(wait)
 	}
+}
+
+// failEpisode reports err as the episode's final failure and returns it.
+func failEpisode(baseContentId string, info EpisodeInfo, err error) error {
+	logf("! %v", err)
+	ev := episodeEvent(baseContentId, info, StatusFailed)
+	ev.Error = err.Error()
+	emitEpisode(ev)
+	return err
 }
 
 // downloadSeason downloads every episode, moving past failed ones; it stops

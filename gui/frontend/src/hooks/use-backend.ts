@@ -7,6 +7,7 @@ import {
   type Environment,
   type Job,
   type Language,
+  type AccountStatus,
   type LogLine,
   type QueueState,
   type Settings,
@@ -20,10 +21,14 @@ export type Backend = {
   languageName: (code: string) => string
   jobs: Job[]
   paused: boolean
+  mixer: boolean
+  accountStatus: AccountStatus[]
+  waitUntil?: string
   logs: LogLine[]
   checking: boolean
   recheck: () => Promise<void>
   save: (s: Settings) => Promise<Environment>
+  switchAccount: (id: string) => Promise<Environment>
 }
 
 export const BackendContext = createContext<Backend | null>(null)
@@ -40,6 +45,9 @@ export function useBackendState(): Backend {
   const [languages, setLanguages] = useState<Language[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [paused, setPaused] = useState(false)
+  const [mixer, setMixer] = useState(false)
+  const [accountStatus, setAccountStatus] = useState<AccountStatus[]>([])
+  const [waitUntil, setWaitUntil] = useState<string | undefined>()
   const [logs, setLogs] = useState<LogLine[]>([])
   const [checking, setChecking] = useState(true)
 
@@ -47,6 +55,9 @@ export function useBackendState(): Backend {
     const applyQueue = (q: QueueState | null) => {
       setJobs(q?.jobs ?? [])
       setPaused(q?.paused ?? false)
+      setMixer(q?.mixer ?? false)
+      setAccountStatus(q?.accounts ?? [])
+      setWaitUntil(q?.waitUntil ?? undefined)
     }
     const offQueue = onQueue(applyQueue)
     const offLog = onLog((line) =>
@@ -86,6 +97,9 @@ export function useBackendState(): Backend {
       languageName: (code) => names.get(code) ?? code,
       jobs,
       paused,
+      mixer,
+      accountStatus,
+      waitUntil,
       logs,
       checking,
       recheck: async () => {
@@ -102,6 +116,17 @@ export function useBackendState(): Backend {
         setEnv(next)
         return next
       },
+      switchAccount: async (id) => {
+        setChecking(true)
+        try {
+          const next = await api.SwitchAccount(id)
+          setSettings(await api.GetSettings())
+          setEnv(next)
+          return next
+        } finally {
+          setChecking(false)
+        }
+      },
     }
-  }, [env, settings, languages, jobs, paused, logs, checking])
+  }, [env, settings, languages, jobs, paused, mixer, accountStatus, waitUntil, logs, checking])
 }

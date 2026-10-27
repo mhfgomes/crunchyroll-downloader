@@ -10,6 +10,7 @@ export type LookupResult = downloader.LookupResult
 export type SearchResult = downloader.SearchResult
 export type SeasonSummary = downloader.SeasonSummary
 export type Settings = main.Settings
+export type Account = main.Account
 export type Environment = main.Environment
 export type Language = main.Language
 export type LogLine = main.LogLine
@@ -31,7 +32,14 @@ export type Job = Omit<main.Job, "status" | "retryAt"> & {
 
 export const api = App
 
-export type QueueState = { paused: boolean; jobs: Job[] }
+export type AccountStatus = Omit<main.AccountStatus, "readyAt"> & { readyAt?: string }
+export type QueueState = {
+  paused: boolean
+  jobs: Job[]
+  mixer: boolean
+  accounts: AccountStatus[] | null
+  waitUntil?: string
+}
 
 export function onQueue(cb: (q: QueueState) => void) {
   return Events.On("queue", (ev) => cb(ev.data as QueueState))

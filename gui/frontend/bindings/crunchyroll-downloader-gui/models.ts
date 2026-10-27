@@ -6,6 +6,26 @@
 import * as downloader$0 from "../crunchyroll-downloader/downloader/models.js";
 
 /**
+ * Account is a saved Crunchyroll login.
+ */
+export interface Account {
+    "id": string;
+    "name": string;
+    "etpRt": string;
+}
+
+/**
+ * AccountStatus is an account's mixer state as the frontend sees it.
+ */
+export interface AccountStatus {
+    "id": string;
+    "name": string;
+    "busy": boolean;
+    "readyAt"?: string | null;
+    "reason"?: string;
+}
+
+/**
  * Environment reports what the downloader needs before it can run.
  */
 export interface Environment {
@@ -13,6 +33,7 @@ export interface Environment {
     "ffmpegError"?: string;
     "widevine": boolean;
     "loggedIn": boolean;
+    "account"?: string;
     "loginError"?: string;
 }
 
@@ -22,6 +43,12 @@ export interface Environment {
 export interface Job {
     "id": string;
     "title": downloader$0.Title;
+
+    /**
+     * AccountID is the account the job downloads with. Empty, or an account
+     * that was since removed, means the active one.
+     */
+    "accountId"?: string;
     "status": JobStatus;
     "error"?: string;
     "output"?: string;
@@ -71,13 +98,37 @@ export interface LogLine {
 export interface QueueState {
     "paused": boolean;
     "jobs": (Job | null)[] | null;
+
+    /**
+     * Mixer reports whether downloads are spread over accounts, and
+     * Accounts how each one is doing.
+     */
+    "mixer": boolean;
+    "accounts": AccountStatus[] | null;
+
+    /**
+     * WaitUntil is set while every account the queue could use is resting.
+     */
+    "waitUntil"?: string | null;
 }
 
 /**
  * Settings is everything the GUI persists between launches.
  */
 export interface Settings {
-    "etpRt": string;
+    /**
+     * EtpRt is the single cookie saved by earlier versions; normalize moves it
+     * into Accounts.
+     */
+    "etpRt"?: string;
+    "accounts": Account[] | null;
+    "activeAccount": string;
+
+    /**
+     * Mixer spreads episodes queued without a fixed account over every
+     * account; see mixer.go.
+     */
+    "mixer": boolean;
     "ffmpegPath": string;
     "options": downloader$0.Options;
 }
