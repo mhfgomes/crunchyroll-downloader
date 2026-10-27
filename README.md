@@ -105,7 +105,7 @@ If Crunchyroll rate-limits an episode anyway, it's retried in place (starting at
 
 ## Desktop app
 
-Prefer a window to a terminal? Download `crdl-gui-windows.exe` from the latest release. Paste a series or episode link, choose the episodes, and follow each download's progress in the queue. The cookie, languages, qualities, output folder and Widevine CDM location are set once in Settings. FFmpeg is still required. See [gui/README.md](gui/README.md) to build it yourself.
+Prefer a window to a terminal? Download `crdl-gui-windows.exe`, `crdl-gui-linux`, `crdl-gui-macos-arm64` or `crdl-gui-macos-x64` from the latest release. Paste a series or episode link, choose the episodes, and follow each download's progress in the queue. The cookie, languages, qualities, output folder and Widevine CDM location are set once in Settings. FFmpeg is still required. See [gui/README.md](gui/README.md) to build it yourself.
 
 ## Building
 

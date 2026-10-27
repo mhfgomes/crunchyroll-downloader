@@ -52,8 +52,28 @@ jobs:
         run: gh release upload "$TAG" "$ARTIFACT" --clobber
 
   gui:
-    name: Build crdl-gui-windows.exe
-    runs-on: windows-latest
+    name: Build ${{ matrix.artifact }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            runner: ubuntu-24.04
+            artifact: crdl-gui-linux
+          - os: darwin
+            arch: arm64
+            runner: macos-latest
+            artifact: crdl-gui-macos-arm64
+          - os: darwin
+            arch: amd64
+            runner: macos-15-intel
+            artifact: crdl-gui-macos-x64
+          - os: windows
+            arch: amd64
+            runner: windows-latest
+            artifact: crdl-gui-windows.exe
 
     steps:
       - name: Checkout
@@ -69,19 +89,30 @@ jobs:
         with:
           node-version: 22
 
+      # Wails needs cgo and the system webview, so each platform builds on its own runner
+      - name: Install Linux dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libx11-dev
+
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
 
       - name: Build
         working-directory: gui
         shell: bash
+        env:
+          EXT: ${{ matrix.os == 'windows' && '.exe' || '' }}
+          ARTIFACT: ${{ matrix.artifact }}
         run: |
           wails3 build
-          mv bin/crdl-gui.exe bin/crdl-gui-windows.exe
+          mv "bin/crdl-gui$EXT" "bin/$ARTIFACT"
 
       - name: Upload to release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$TAG" gui/bin/crdl-gui-windows.exe --clobber
+          ARTIFACT: ${{ matrix.artifact }}
+        run: gh release upload "$TAG" "gui/bin/$ARTIFACT" --clobber
