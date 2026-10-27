@@ -215,3 +215,12 @@ export function SeasonEpisodes(seasonID: string): $CancellablePromise<downloader
 export function Skip(id: string): $CancellablePromise<void> {
     return $Call.ByID(1038591082, id);
 }
+
+/**
+ * SortPending reorders the jobs that haven't started yet, leaving running and
+ * finished jobs where they are. by is "episode" (series, season, number),
+ * "title", "added" or "reverse".
+ */
+export function SortPending(by: string): $CancellablePromise<void> {
+    return $Call.ByID(78119712, by);
+}

@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react"
 import {
   ArrowDownIcon,
+  ArrowUpDownIcon,
   ArrowDownToLineIcon,
   ArrowUpIcon,
   ArrowUpToLineIcon,
   ExternalLinkIcon,
   FolderOpenIcon,
+  GripVerticalIcon,
   PauseIcon,
   PlayIcon,
   RotateCwIcon,
@@ -22,6 +24,12 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "@/components/ui/select"
 import { episodeLink } from "@/components/title-cards"
 import {
   Tooltip,
@@ -52,6 +60,10 @@ const STATUS: Record<JobStatus, { label: string; className: string }> = {
 
 export function QueueView({ onBrowse }: { onBrowse: () => void }) {
   const { jobs, paused } = useBackend()
+  const [drag, setDrag] = useState<{ id: string; over: number } | null>(null)
+  const sortable =
+    jobs.filter((j) => j.status === "queued" || j.status === "paused").length >
+    1
   const finished = jobs.filter((j) =>
     ["done", "skipped", "failed", "cancelled"].includes(j.status)
   )
@@ -74,6 +86,24 @@ export function QueueView({ onBrowse }: { onBrowse: () => void }) {
           </p>
         </div>
         <div className="flex gap-2">
+          {sortable && (
+            <Select
+              value={null}
+              onValueChange={(by) => by && void api.SortPending(by as string)}
+            >
+              <SelectTrigger size="sm" aria-label="Sort waiting episodes">
+                <ArrowUpDownIcon className="size-3.5" />
+                Sort
+              </SelectTrigger>
+              <SelectContent>
+                {SORTS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           {retryable > 0 && (
             <Button
               variant="outline"
@@ -119,9 +149,30 @@ export function QueueView({ onBrowse }: { onBrowse: () => void }) {
             </Button>
           </div>
         ) : (
-          <ol className="divide-y px-8">
+          <ol className="divide-y px-8" onDragEnd={() => setDrag(null)}>
             {jobs.map((job, i) => (
-              <JobRow key={job.id} job={job} index={i} last={jobs.length - 1} />
+              <JobRow
+                key={job.id}
+                job={job}
+                index={i}
+                last={jobs.length - 1}
+                dragging={drag?.id === job.id}
+                dropEdge={
+                  drag && drag.id !== job.id && drag.over === i
+                    ? jobs.findIndex((j) => j.id === drag.id) < i
+                      ? "bottom"
+                      : "top"
+                    : null
+                }
+                onDragStart={() => setDrag({ id: job.id, over: i })}
+                onDragOver={() =>
+                  drag && drag.over !== i && setDrag({ ...drag, over: i })
+                }
+                onDrop={() => {
+                  if (drag && drag.id !== job.id) void api.Move(drag.id, i)
+                  setDrag(null)
+                }}
+              />
             ))}
           </ol>
         )}
@@ -130,14 +181,31 @@ export function QueueView({ onBrowse }: { onBrowse: () => void }) {
   )
 }
 
+const SORTS = [
+  { value: "episode", label: "By series and episode" },
+  { value: "title", label: "By episode title" },
+  { value: "added", label: "By date added" },
+  { value: "reverse", label: "Reverse order" },
+]
+
 function JobRow({
   job,
   index,
   last,
+  dragging,
+  dropEdge,
+  onDragStart,
+  onDragOver,
+  onDrop,
 }: {
   job: Job
   index: number
   last: number
+  dragging: boolean
+  dropEdge: "top" | "bottom" | null
+  onDragStart: () => void
+  onDragOver: () => void
+  onDrop: () => void
 }) {
   const t = job.title
   const status = STATUS[job.status]
@@ -148,7 +216,44 @@ function JobRow({
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger render={<li className="flex gap-5 py-4" />}>
+      <ContextMenuTrigger
+        render={
+          <li
+            className={cn(
+              "group/row relative -ml-3 flex gap-3 py-4 transition-opacity",
+              dragging && "opacity-40",
+              dropEdge === "top" &&
+                "before:absolute before:inset-x-0 before:-top-px before:h-0.5 before:bg-primary",
+              dropEdge === "bottom" &&
+                "after:absolute after:inset-x-0 after:-bottom-px after:h-0.5 after:bg-primary"
+            )}
+            onDragOver={(e) => {
+              e.preventDefault()
+              e.dataTransfer.dropEffect = "move"
+              onDragOver()
+            }}
+            onDrop={(e) => {
+              e.preventDefault()
+              onDrop()
+            }}
+          />
+        }
+      >
+        <div
+          draggable
+          aria-label="Drag to reorder"
+          title="Drag to reorder"
+          className="flex w-6 shrink-0 cursor-grab items-center justify-center text-muted-foreground/40 transition-colors group-hover/row:text-muted-foreground active:cursor-grabbing"
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = "move"
+            e.dataTransfer.setData("text/plain", job.id)
+            const row = e.currentTarget.parentElement
+            if (row) e.dataTransfer.setDragImage(row, 16, 16)
+            onDragStart()
+          }}
+        >
+          <GripVerticalIcon className="size-4" />
+        </div>
         <div className="relative aspect-video w-36 shrink-0 overflow-hidden rounded-md bg-muted">
           {t.thumbnail && (
             <img src={t.thumbnail} alt="" className="size-full object-cover" />

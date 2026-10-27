@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -404,6 +407,44 @@ func (a *App) Move(id string, to int) {
 		to = max(0, min(to, len(a.jobs)-1))
 		a.jobs = append(a.jobs[:i], a.jobs[i+1:]...)
 		a.jobs = append(a.jobs[:to], append([]*Job{j}, a.jobs[to:]...)...)
+	})
+}
+
+// SortPending reorders the jobs that haven't started yet, leaving running and
+// finished jobs where they are. by is "episode" (series, season, number),
+// "title", "added" or "reverse".
+func (a *App) SortPending(by string) {
+	a.update(func() {
+		var slots []int
+		var pending []*Job
+		for i, j := range a.jobs {
+			if (j.Status == JobQueued || j.Status == JobPaused) && j != a.current {
+				slots = append(slots, i)
+				pending = append(pending, j)
+			}
+		}
+		added := func(j *Job) int { n, _ := strconv.Atoi(j.ID); return n }
+		switch by {
+		case "reverse":
+			slices.Reverse(pending)
+		case "title":
+			slices.SortStableFunc(pending, func(x, y *Job) int {
+				return cmp.Compare(strings.ToLower(x.Title.Title), strings.ToLower(y.Title.Title))
+			})
+		case "added":
+			slices.SortStableFunc(pending, func(x, y *Job) int { return cmp.Compare(added(x), added(y)) })
+		default:
+			slices.SortStableFunc(pending, func(x, y *Job) int {
+				return cmp.Or(
+					cmp.Compare(strings.ToLower(x.Title.SeriesTitle), strings.ToLower(y.Title.SeriesTitle)),
+					cmp.Compare(x.Title.Season, y.Title.Season),
+					cmp.Compare(x.Title.Number, y.Title.Number),
+				)
+			})
+		}
+		for k, i := range slots {
+			a.jobs[i] = pending[k]
+		}
 	})
 }
 
