@@ -146,6 +146,12 @@ export interface Settings {
      * row up to 30 minutes.
      */
     "rateLimitTimeout": time$0.Duration;
+
+    /**
+     * RateLimitTimeoutMax, when above RateLimitTimeout, makes each timeout
+     * a random length between the two.
+     */
+    "rateLimitTimeoutMax": time$0.Duration;
     "ffmpegPath": string;
     "options": downloader$0.Options;
 }

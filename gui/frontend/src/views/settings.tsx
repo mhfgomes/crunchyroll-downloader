@@ -330,11 +330,12 @@ export function SettingsView() {
                   : "How long to wait before starting the next episode."
               }
             >
-              <DurationField
+              <DurationRange
                 label="pause between episodes"
-                seconds={Math.round(o.downloadDelay / NS_PER_SECOND)}
-                onChange={(secs) =>
-                  setOpt({ downloadDelay: secs * NS_PER_SECOND })
+                min={o.downloadDelay}
+                max={o.downloadDelayMax}
+                onChange={(min, max) =>
+                  setOpt({ downloadDelay: min, downloadDelayMax: max })
                 }
               />
             </Row>
@@ -348,11 +349,12 @@ export function SettingsView() {
                   : "Automatic: 1 minute, doubling on repeated rate limits up to 30 minutes. Set a time to always use that instead."
               }
             >
-              <DurationField
+              <DurationRange
                 label="rate-limit timeout"
-                seconds={Math.round(draft.rateLimitTimeout / NS_PER_SECOND)}
-                onChange={(secs) =>
-                  set({ rateLimitTimeout: secs * NS_PER_SECOND })
+                min={draft.rateLimitTimeout}
+                max={draft.rateLimitTimeoutMax}
+                onChange={(min, max) =>
+                  set({ rateLimitTimeout: min, rateLimitTimeoutMax: max })
                 }
               />
             </Row>
@@ -628,11 +630,68 @@ function PathInput({
   )
 }
 
+// The longest duration a DurationField accepts: a day.
+const MAX_SECONDS = 24 * 3600
+
 const UNITS = [
   { value: "s", label: "seconds", seconds: 1 },
   { value: "m", label: "minutes", seconds: 60 },
   { value: "h", label: "hours", seconds: 3600 },
 ]
+
+/**
+ * Edits a duration in nanoseconds, optionally as a random range: with Random
+ * on, each use picks a time between min and max.
+ */
+function DurationRange({
+  label,
+  min,
+  max,
+  onChange,
+}: {
+  label: string
+  min: number
+  max: number
+  onChange: (min: number, max: number) => void
+}) {
+  const random = max > min
+  const secs = (ns: number) => Math.round(ns / NS_PER_SECOND)
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <DurationField
+          label={random ? `${label} minimum` : label}
+          seconds={secs(min)}
+          onChange={(s) => {
+            const lo = s * NS_PER_SECOND
+            onChange(lo, random ? Math.max(max, lo + NS_PER_SECOND) : 0)
+          }}
+        />
+        {random && (
+          <>
+            <span className="text-sm text-muted-foreground">to</span>
+            <DurationField
+              label={`${label} maximum`}
+              seconds={secs(max)}
+              onChange={(s) =>
+                onChange(min, Math.max(s * NS_PER_SECOND, min + NS_PER_SECOND))
+              }
+            />
+          </>
+        )}
+      </div>
+      <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+        <Switch
+          size="sm"
+          checked={random}
+          disabled={min <= 0}
+          onCheckedChange={(on) => onChange(min, on ? min * 2 : 0)}
+        />
+        Random between two values
+      </label>
+    </div>
+  )
+}
 
 /** Edits a duration in seconds as an amount plus a unit. */
 function DurationField({
@@ -659,7 +718,7 @@ function DurationField({
         label={label}
         value={amount}
         min={0}
-        max={unit.value === "s" ? 3600 : unit.value === "m" ? 600 : 24}
+        max={MAX_SECONDS / unit.seconds}
         onChange={(v) => onChange(v * unit.seconds)}
       />
       <Select
@@ -669,7 +728,13 @@ function DurationField({
           const next = UNITS.find((u) => u.value === v)
           if (!next) return
           setUnit(next)
-          onChange(amount * next.seconds)
+          // Keep the same length of time, converted to the new unit. A
+          // value that doesn't divide evenly (90s in minutes) rounds to the
+          // nearest whole amount, but never down to zero.
+          if (seconds % next.seconds !== 0) {
+            const n = Math.max(1, Math.round(seconds / next.seconds))
+            onChange(n * next.seconds)
+          }
         }}
       >
         <SelectTrigger className="w-28" aria-label={`${label} unit`}>

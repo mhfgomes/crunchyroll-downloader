@@ -23,7 +23,10 @@ type Options struct {
 	OutputDir     string        `json:"outputDir"`
 	Simultaneous  int           `json:"simultaneous"`
 	DownloadDelay time.Duration `json:"downloadDelay"`
-	DebugManifest bool          `json:"debugManifest"`
+	// DownloadDelayMax, when above DownloadDelay, makes each pause a random
+	// length between the two.
+	DownloadDelayMax time.Duration `json:"downloadDelayMax"`
+	DebugManifest    bool          `json:"debugManifest"`
 	// WidevinePath is a ".wvd" file or a directory holding the CDM files;
 	// empty means the working directory.
 	WidevinePath string `json:"widevinePath"`
@@ -134,7 +137,7 @@ func Configure(opts Options) error {
 	options = opts
 	debug = opts.DebugManifest
 	simultaneous = opts.Simultaneous
-	backoff = newDownloadBackoff(opts.DownloadDelay)
+	backoff = newDownloadBackoff(opts.DownloadDelay, opts.DownloadDelayMax)
 	return nil
 }
 

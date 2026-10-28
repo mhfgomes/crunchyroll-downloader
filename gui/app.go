@@ -43,9 +43,12 @@ type Settings struct {
 	// RateLimitTimeout is how long an account sits out after Crunchyroll
 	// rate-limits it. Zero means automatic: a minute, doubling on hits in a
 	// row up to 30 minutes.
-	RateLimitTimeout time.Duration      `json:"rateLimitTimeout"`
-	FFmpegPath       string             `json:"ffmpegPath"`
-	Options          downloader.Options `json:"options"`
+	RateLimitTimeout time.Duration `json:"rateLimitTimeout"`
+	// RateLimitTimeoutMax, when above RateLimitTimeout, makes each timeout
+	// a random length between the two.
+	RateLimitTimeoutMax time.Duration      `json:"rateLimitTimeoutMax"`
+	FFmpegPath          string             `json:"ffmpegPath"`
+	Options             downloader.Options `json:"options"`
 }
 
 // account returns the account with the given ID, or nil.
@@ -207,7 +210,7 @@ func NewApp() *App {
 func configure(s Settings) error {
 	opts := s.Options
 	if s.mixerOn() {
-		opts.DownloadDelay = 0
+		opts.DownloadDelay, opts.DownloadDelayMax = 0, 0
 	}
 	return downloader.Configure(opts)
 }
@@ -842,7 +845,7 @@ func (a *App) worker() {
 
 		a.mu.Lock()
 		now = time.Now()
-		pause := a.settings.Options.DownloadDelay
+		pause := downloader.RandomBetween(a.settings.Options.DownloadDelay, a.settings.Options.DownloadDelayMax)
 		var st *accountState
 		if (mix || timed) && acc != nil {
 			st = a.stateLocked(acc.ID)
@@ -873,7 +876,8 @@ func (a *App) worker() {
 			}
 		case st != nil && errors.Is(err, downloader.ErrRateLimited):
 			st.hits++
-			bench(cooldown(st.hits, pause, a.settings.RateLimitTimeout), "Rate-limited")
+			bench(cooldown(st.hits, a.settings.Options.DownloadDelay,
+				downloader.RandomBetween(a.settings.RateLimitTimeout, a.settings.RateLimitTimeoutMax)), "Rate-limited")
 		case mix && errors.Is(err, downloader.ErrActiveStreams):
 			bench(streamsCooldown, "Too many open streams")
 		case mix && loginFailed:

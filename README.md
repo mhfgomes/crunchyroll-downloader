@@ -50,6 +50,8 @@ Usage of ./crunchyroll-downloader:
         Minimum delay between episode downloads, to help avoid Crunchyroll's rate limiting (e.g. "30s", "2m")
   -etp-rt string
         The "etp_rt" cookie value of your account
+  -download-delay-max duration
+        With -download-delay, wait a random time between the two before each episode (e.g. "30s" to "2m")
   -file string
         Path to a text file with one URL per line
   -season int

@@ -37,6 +37,12 @@ export interface Options {
     "outputDir": string;
     "simultaneous": number;
     "downloadDelay": time$0.Duration;
+
+    /**
+     * DownloadDelayMax, when above DownloadDelay, makes each pause a random
+     * length between the two.
+     */
+    "downloadDelayMax": time$0.Duration;
     "debugManifest": boolean;
 
     /**
