@@ -58,6 +58,8 @@ Usage of ./crunchyroll-downloader:
         Maximum simultaneous playback sessions for audio and subtitle downloads; keep within your account's available stream slots (default 1)
   -subs-lang string
         Subtitle language(s), comma-separated (e.g. "fr-FR,ALL"). Add ALL for every available subtitle; explicit languages lead, the first available track is default, and ALL alone prefers en-US (default "en-US")
+  -temp-dir string
+        Folder for track downloads before they are merged (default: the system temp folder)
   -url string
         URL of the episode/season to download
   -video-quality string

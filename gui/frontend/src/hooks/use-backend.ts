@@ -21,6 +21,8 @@ export type Backend = {
   languageName: (code: string) => string
   jobs: Job[]
   paused: boolean
+  /** Settings can't change while the queue is running. */
+  locked: boolean
   mixer: boolean
   accountStatus: AccountStatus[]
   waitUntil?: string
@@ -97,6 +99,9 @@ export function useBackendState(): Backend {
       languageName: (code) => names.get(code) ?? code,
       jobs,
       paused,
+      locked:
+        jobs.some((j) => ["downloading", "merging"].includes(j.status)) ||
+        (!paused && jobs.some((j) => ["queued", "waiting"].includes(j.status))),
       mixer,
       accountStatus,
       waitUntil,

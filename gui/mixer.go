@@ -36,22 +36,29 @@ type AccountStatus struct {
 	ID      string     `json:"id"`
 	Name    string     `json:"name"`
 	Busy    bool       `json:"busy"`
+	InMixer bool       `json:"inMixer"`
 	ReadyAt *time.Time `json:"readyAt,omitempty"`
 	Reason  string     `json:"reason,omitempty"`
 }
 
-// mixerOn reports whether s spreads downloads over its accounts.
-func (s Settings) mixerOn() bool {
-	if !s.Mixer {
-		return false
-	}
-	n := 0
+// mixed reports whether the mixer may hand episodes to acc.
+func (acc Account) mixed() bool { return acc.EtpRt != "" && !acc.NoMixer }
+
+// mixerAccounts lists the accounts the mixer chooses from.
+func (s Settings) mixerAccounts() []Account {
+	var out []Account
 	for _, acc := range s.Accounts {
-		if acc.EtpRt != "" {
-			n++
+		if acc.mixed() {
+			out = append(out, acc)
 		}
 	}
-	return n > 1
+	return out
+}
+
+// mixerOn reports whether s spreads downloads over its accounts, which takes
+// at least two of them in the mixer.
+func (s Settings) mixerOn() bool {
+	return s.Mixer && len(s.mixerAccounts()) > 1
 }
 
 // pickAccount chooses the account to download with from candidates: the
@@ -86,13 +93,25 @@ func pickAccount(candidates []Account, state map[string]*accountState, now time.
 }
 
 // cooldown is how long to bench an account after its hits-th rate limit in a
-// row, starting from the larger of minCooldown and the configured pause.
-func cooldown(hits int, pause time.Duration) time.Duration {
+// row: the configured timeout when there is one, otherwise starting from the
+// larger of minCooldown and the pause and doubling up to maxCooldown.
+func cooldown(hits int, pause, timeout time.Duration) time.Duration {
+	if timeout > 0 {
+		return timeout
+	}
 	wait := max(minCooldown, pause)
 	for i := 1; i < hits && wait < maxCooldown; i++ {
 		wait *= 2
 	}
 	return min(wait, maxCooldown)
+}
+
+// idOrEmpty is the account's ID, or "" for no account.
+func (acc *Account) idOrEmpty() string {
+	if acc == nil {
+		return ""
+	}
+	return acc.ID
 }
 
 // stateLocked returns the mixer state for an account, creating it.
@@ -114,7 +133,7 @@ func (a *App) nextMixedLocked(now time.Time) (*Job, *Account, time.Time) {
 		if j.Status != JobQueued {
 			continue
 		}
-		candidates := a.settings.Accounts
+		candidates := a.settings.mixerAccounts()
 		if acc := a.settings.account(j.AccountID); acc != nil {
 			candidates = []Account{*acc}
 		}
@@ -133,7 +152,7 @@ func (a *App) nextMixedLocked(now time.Time) (*Job, *Account, time.Time) {
 func (a *App) accountStatusLocked(now time.Time) []AccountStatus {
 	out := []AccountStatus{}
 	for _, acc := range a.settings.Accounts {
-		s := AccountStatus{ID: acc.ID, Name: acc.Name, Busy: a.currentAccount == acc.ID}
+		s := AccountStatus{ID: acc.ID, Name: acc.Name, Busy: a.currentAccount == acc.ID, InMixer: acc.mixed()}
 		if st := a.accState[acc.ID]; st != nil && st.readyAt.After(now) {
 			t := st.readyAt
 			s.ReadyAt, s.Reason = &t, st.reason

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -26,6 +27,9 @@ type Options struct {
 	// WidevinePath is a ".wvd" file or a directory holding the CDM files;
 	// empty means the working directory.
 	WidevinePath string `json:"widevinePath"`
+	// TempDir holds track downloads until they are merged; empty means the
+	// system temp folder.
+	TempDir string `json:"tempDir"`
 }
 
 // DefaultOptions returns the same defaults as the CLI flags.
@@ -119,6 +123,11 @@ func Configure(opts Options) error {
 	}
 	if opts.AudioQuality == "" {
 		opts.AudioQuality = "192k"
+	}
+	if opts.TempDir != "" {
+		if err := os.MkdirAll(opts.TempDir, 0o755); err != nil {
+			return fmt.Errorf("temp folder: %w", err)
+		}
 	}
 	runMu.Lock()
 	defer runMu.Unlock()

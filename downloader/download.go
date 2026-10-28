@@ -75,15 +75,15 @@ func getFilename(set *mpd.AdaptationSet, subExt string) string {
 		if subExt == "" {
 			subExt = "ass"
 		}
-		f, _ := os.CreateTemp("", "crdl-subs-*."+subExt)
+		f, _ := os.CreateTemp(options.TempDir, "crdl-subs-*."+subExt)
 		return f.Name()
 	}
 	for _, representation := range set.Representations {
 		if representation.Height != nil {
-			f, _ := os.CreateTemp("", "crdl-video-*.mp4")
+			f, _ := os.CreateTemp(options.TempDir, "crdl-video-*.mp4")
 			return f.Name()
 		} else if representation.Bandwidth != nil {
-			f, _ := os.CreateTemp("", "crdl-audio-*.mp3")
+			f, _ := os.CreateTemp(options.TempDir, "crdl-audio-*.mp3")
 			return f.Name()
 		}
 	}

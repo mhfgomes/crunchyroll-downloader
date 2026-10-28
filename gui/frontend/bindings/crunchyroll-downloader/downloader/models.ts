@@ -44,6 +44,12 @@ export interface Options {
      * empty means the working directory.
      */
     "widevinePath": string;
+
+    /**
+     * TempDir holds track downloads until they are merged; empty means the
+     * system temp folder.
+     */
+    "tempDir": string;
 }
 
 /**

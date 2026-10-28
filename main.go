@@ -25,6 +25,7 @@ func main() {
 	downloadDelay := flag.Duration("download-delay", 0, "Minimum delay between episode downloads, to help avoid Crunchyroll's rate limiting (e.g. \"30s\", \"2m\")")
 	simultaneous := flag.Int("simultaneous", defaults.Simultaneous, "Maximum simultaneous playback sessions for audio and subtitle downloads; keep within your account's available stream slots")
 	output := flag.String("output-dir", defaults.OutputDir, "Target base path for downloading")
+	tempDir := flag.String("temp-dir", "", "Folder for track downloads before they are merged (default: the system temp folder)")
 	url := flag.String("url", "", "URL of the episode/season to download")
 	urlsFile := flag.String("file", "", "Path to a text file with one URL per line")
 	flag.Parse()
@@ -36,6 +37,7 @@ func main() {
 		VideoQuality:  *videoQuality,
 		AudioQuality:  *audioQuality,
 		OutputDir:     *output,
+		TempDir:       *tempDir,
 		Simultaneous:  *simultaneous,
 		DownloadDelay: *downloadDelay,
 		DebugManifest: *debug,

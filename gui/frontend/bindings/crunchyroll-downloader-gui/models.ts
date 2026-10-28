@@ -4,6 +4,9 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as downloader$0 from "../crunchyroll-downloader/downloader/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as time$0 from "../time/models.js";
 
 /**
  * Account is a saved Crunchyroll login.
@@ -12,6 +15,12 @@ export interface Account {
     "id": string;
     "name": string;
     "etpRt": string;
+
+    /**
+     * NoMixer leaves the account out of the mixer; jobs pinned to it still
+     * use it.
+     */
+    "noMixer"?: boolean;
 }
 
 /**
@@ -21,6 +30,7 @@ export interface AccountStatus {
     "id": string;
     "name": string;
     "busy": boolean;
+    "inMixer": boolean;
     "readyAt"?: string | null;
     "reason"?: string;
 }
@@ -129,6 +139,13 @@ export interface Settings {
      * account; see mixer.go.
      */
     "mixer": boolean;
+
+    /**
+     * RateLimitTimeout is how long an account sits out after Crunchyroll
+     * rate-limits it. Zero means automatic: a minute, doubling on hits in a
+     * row up to 30 minutes.
+     */
+    "rateLimitTimeout": time$0.Duration;
     "ffmpegPath": string;
     "options": downloader$0.Options;
 }

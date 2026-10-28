@@ -538,7 +538,7 @@ function MixerStrip() {
       <span className="flex items-center gap-1.5 font-medium">
         <ShuffleIcon className="size-3.5 text-primary" /> Mixer
       </span>
-      {accountStatus.map((s) => {
+      {accountStatus.filter((s) => s.inMixer || s.busy).map((s) => {
         const resting = s.readyAt && new Date(s.readyAt).getTime() > now
         return (
           <span

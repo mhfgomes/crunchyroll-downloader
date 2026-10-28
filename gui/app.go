@@ -25,6 +25,9 @@ type Account struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	EtpRt string `json:"etpRt"`
+	// NoMixer leaves the account out of the mixer; jobs pinned to it still
+	// use it.
+	NoMixer bool `json:"noMixer,omitempty"`
 }
 
 // Settings is everything the GUI persists between launches.
@@ -36,9 +39,13 @@ type Settings struct {
 	ActiveAccount string    `json:"activeAccount"`
 	// Mixer spreads episodes queued without a fixed account over every
 	// account; see mixer.go.
-	Mixer      bool               `json:"mixer"`
-	FFmpegPath string             `json:"ffmpegPath"`
-	Options    downloader.Options `json:"options"`
+	Mixer bool `json:"mixer"`
+	// RateLimitTimeout is how long an account sits out after Crunchyroll
+	// rate-limits it. Zero means automatic: a minute, doubling on hits in a
+	// row up to 30 minutes.
+	RateLimitTimeout time.Duration      `json:"rateLimitTimeout"`
+	FFmpegPath       string             `json:"ffmpegPath"`
+	Options          downloader.Options `json:"options"`
 }
 
 // account returns the account with the given ID, or nil.
@@ -273,6 +280,9 @@ func (a *App) DefaultOptions() downloader.Options {
 // SaveSettings validates, applies and persists settings. It blocks until any
 // running download finishes with the old options.
 func (a *App) SaveSettings(s Settings) (Environment, error) {
+	if err := a.checkUnlocked(); err != nil {
+		return a.Environment(), err
+	}
 	s.normalize()
 	if err := configure(s); err != nil {
 		return a.Environment(), err
@@ -316,6 +326,9 @@ func (a *App) CheckEnvironment() Environment {
 // SwitchAccount makes id the active account, which new jobs are queued with,
 // and signs in with it.
 func (a *App) SwitchAccount(id string) (Environment, error) {
+	if err := a.checkUnlocked(); err != nil {
+		return a.Environment(), err
+	}
 	a.mu.Lock()
 	s := a.settings
 	a.mu.Unlock()
@@ -490,6 +503,36 @@ func (a *App) snapshotLocked() QueueState {
 		Paused: a.paused, Jobs: out,
 		Mixer: a.settings.mixerOn(), Accounts: a.accountStatusLocked(time.Now()), WaitUntil: a.waitUntil,
 	}
+}
+
+// errSettingsLocked is returned when settings change while the queue runs.
+var errSettingsLocked = errors.New("pause the queue before changing settings")
+
+// runningLocked reports whether the queue is working: something is
+// downloading, or it isn't paused and has episodes waiting to start. Settings
+// are locked meanwhile so a download never sees them change halfway.
+func (a *App) runningLocked() bool {
+	if a.current != nil {
+		return true
+	}
+	if a.paused {
+		return false
+	}
+	for _, j := range a.jobs {
+		if j.Status == JobQueued || j.Status == JobWaiting {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) checkUnlocked() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.runningLocked() {
+		return errSettingsLocked
+	}
+	return nil
 }
 
 // update runs fn under the lock, then wakes the worker and publishes the queue.
@@ -721,6 +764,7 @@ func (a *App) worker() {
 		a.mu.Lock()
 		now := time.Now()
 		mix := a.settings.mixerOn()
+		timed := a.settings.RateLimitTimeout > 0
 		var job *Job
 		var acc *Account
 		var until time.Time
@@ -738,6 +782,10 @@ func (a *App) worker() {
 					acc = a.settings.account(job.AccountID)
 					if acc == nil {
 						acc = a.settings.account(a.settings.ActiveAccount)
+					}
+					// With a time-out set, wait out a timed-out account.
+					if st := a.accState[acc.idOrEmpty()]; timed && st != nil && st.readyAt.After(now) {
+						job, acc, until = nil, nil, st.readyAt
 					}
 				}
 			}
@@ -785,7 +833,7 @@ func (a *App) worker() {
 			}
 		}
 		if err == nil {
-			if mix {
+			if mix || timed {
 				err = downloader.DownloadTitleOnce(ctx, job.Title)
 			} else {
 				err = downloader.DownloadTitle(ctx, job.Title)
@@ -796,7 +844,7 @@ func (a *App) worker() {
 		now = time.Now()
 		pause := a.settings.Options.DownloadDelay
 		var st *accountState
-		if mix && acc != nil {
+		if (mix || timed) && acc != nil {
 			st = a.stateLocked(acc.ID)
 			st.lastUsed = now
 		}
@@ -804,7 +852,11 @@ func (a *App) worker() {
 		bench := func(d time.Duration, reason string) {
 			benched = true
 			st.readyAt, st.reason = now.Add(d), reason
-			job.Status, job.Error = JobQueued, fmt.Sprintf("%s on %s, so it moves to another account.", reason, accName)
+			next := "it moves to another account"
+			if !mix {
+				next = "it waits until " + st.readyAt.Local().Format(time.Kitchen)
+			}
+			job.Status, job.Error = JobQueued, fmt.Sprintf("%s on %s, so %s.", reason, accName, next)
 			go a.onLog(fmt.Sprintf("%s on %s. Resting it until %s.", reason, accName, st.readyAt.Local().Format(time.Kitchen)))
 		}
 		switch {
@@ -821,10 +873,10 @@ func (a *App) worker() {
 			}
 		case st != nil && errors.Is(err, downloader.ErrRateLimited):
 			st.hits++
-			bench(cooldown(st.hits, pause), "Rate-limited")
-		case st != nil && errors.Is(err, downloader.ErrActiveStreams):
+			bench(cooldown(st.hits, pause, a.settings.RateLimitTimeout), "Rate-limited")
+		case mix && errors.Is(err, downloader.ErrActiveStreams):
 			bench(streamsCooldown, "Too many open streams")
-		case st != nil && loginFailed:
+		case mix && loginFailed:
 			bench(loginCooldown, "Sign-in failed")
 			if job.AccountID != "" {
 				job.Status, job.Error = JobFailed, err.Error()
@@ -834,13 +886,16 @@ func (a *App) worker() {
 		case job.Status != JobSkipped:
 			job.Status = JobDone
 		}
-		if st != nil && !benched {
+		if mix && st != nil && !benched {
 			// Finished one way or another; rest before this account's next
 			// episode.
 			st.hits, st.readyAt, st.reason = 0, now.Add(pause), "Resting"
 			if pause <= 0 {
 				st.reason = ""
 			}
+		}
+		if st != nil && !mix && !benched {
+			st.hits = 0
 		}
 		if st != nil && a.store != nil {
 			if err := a.store.saveAccountState(a.accState); err != nil {
