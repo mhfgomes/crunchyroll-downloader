@@ -27,7 +27,11 @@ func trackTitle(locale string) string {
 // mergeEverything merges the video, all audio tracks and all subtitle tracks
 // into a single MKV container.
 func mergeEverything(videoFile string, audioTracks, subTracks []mediaTrack, outputFile string, info EpisodeInfo) {
-	args := []string{"-i", videoFile}
+	// Fragmented MP4s can report a nonzero start_time even though their first
+	// audio packets start near zero. FFmpeg's default per-input normalization
+	// subtracts that reported start and shifts audio ahead of video/subtitles.
+	// Keep the shared presentation timeline, including AAC priming timestamps.
+	args := []string{"-copyts", "-i", videoFile}
 	for _, audio := range audioTracks {
 		args = append(args, "-i", audio.file)
 	}
@@ -102,6 +106,7 @@ func mergeEverything(videoFile string, audioTracks, subTracks []mediaTrack, outp
 		"-metadata:g", "show="+info.EpisodeMetadata.SeriesTitle,
 		"-metadata:g", "track="+fmt.Sprintf("%v", info.EpisodeMetadata.EpisodeNumber),
 		"-metadata:g", "season_number="+fmt.Sprintf("%v", info.EpisodeMetadata.SeasonNumber),
+		"-avoid_negative_ts", "disabled",
 		outputFile,
 	)
 
