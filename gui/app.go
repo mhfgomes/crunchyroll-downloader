@@ -899,7 +899,7 @@ func (a *App) worker() {
 		}
 		if st != nil && a.store != nil {
 			if err := a.store.saveAccountState(a.accState); err != nil {
-				go a.onLog("Couldn't save the account mixer state: " + err.Error())
+				go a.onLog("Couldn't save the account shuffler state: " + err.Error())
 			}
 		}
 		job.Tracks, job.RetryAt = []Track{}, nil

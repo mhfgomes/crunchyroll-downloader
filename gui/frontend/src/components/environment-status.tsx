@@ -64,7 +64,7 @@ export function EnvironmentStatus({
       toast.error(errorMessage(err))
     }
   }
-  // The mixer needs two accounts with a cookie that are in it.
+  // The shuffler needs two accounts with a cookie that are in it.
   const mixable = accounts.filter((a) => a.etpRt && !a.noMixer).length > 1
 
   async function toggleMixer(on: boolean) {
@@ -72,7 +72,7 @@ export function EnvironmentStatus({
     try {
       await save({ ...settings, mixer: on })
       toast.success(
-        on ? "Mixer on: episodes are spread over your accounts" : "Mixer off"
+        on ? "Shuffler on: episodes are spread over your accounts" : "Shuffler off"
       )
     } catch (err) {
       toast.error(errorMessage(err))
@@ -127,7 +127,7 @@ export function EnvironmentStatus({
           title={
             locked
               ? "Pause the queue to change this"
-              : "Spread episodes over every account in the mixer"
+              : "Spread episodes over every account in the shuffler"
           }
         >
           <ShuffleIcon
@@ -142,7 +142,7 @@ export function EnvironmentStatus({
               settings?.mixer ? "text-foreground" : "text-muted-foreground"
             }
           >
-            Account mixer
+            Account shuffler
           </span>
           <Switch
             size="sm"

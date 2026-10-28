@@ -298,10 +298,10 @@ export function SettingsView() {
             description="Crunchyroll limits how many streams an account can open, and how quickly."
           >
             <Row
-              label="Account mixer"
+              label="Account shuffler"
               hint={
                 (draft.accounts ?? []).filter((a) => a.etpRt).length > 1
-                  ? "Spreads episodes over the accounts marked Use in mixer above, each resting for the pause below after an episode. A rate-limited account is benched and the episode moves on to the next rested one."
+                  ? "Spreads episodes over the accounts marked Use in shuffler above, each resting for the pause below after an episode. A rate-limited account is benched and the episode moves on to the next rested one."
                   : "Add a second account to spread episodes over accounts and avoid rate limits."
               }
             >
@@ -326,7 +326,7 @@ export function SettingsView() {
               label="Pause between episodes"
               hint={
                 draft.mixer
-                  ? "With the mixer on, how long each account rests after an episode."
+                  ? "With the shuffler on, how long each account rests after an episode."
                   : "How long to wait before starting the next episode."
               }
             >
@@ -507,7 +507,7 @@ function AccountRow({
         {error && <span className="text-destructive">{error}</span>}
         {showMixer && (
           <label className="ml-auto flex items-center gap-2 text-muted-foreground">
-            Use in mixer
+            Use in shuffler
             <Switch
               size="sm"
               checked={!account.noMixer}

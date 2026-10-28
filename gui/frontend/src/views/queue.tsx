@@ -90,7 +90,7 @@ export function QueueView({ onBrowse }: { onBrowse: () => void }) {
             {paused
               ? "Paused. Nothing new starts until you resume."
               : mixer
-                ? "Episodes download one at a time, each on the account that has rested longest."
+                ? "Episodes download one at a time, shuffled onto the account that has rested longest."
                 : "Episodes download one at a time, in order. Right-click one to reorder it."}
           </p>
           {!paused && waitUntil && (
@@ -487,7 +487,7 @@ function JobMenu({
                 onValueChange={(id) => void api.SetJobAccount(job.id, id as string)}
               >
                 <ContextMenuRadioItem value="">
-                  {mixer ? "Any account (mixer)" : "Active account"}
+                  {mixer ? "Any account (shuffler)" : "Active account"}
                 </ContextMenuRadioItem>
                 {accounts.map((acc) => (
                   <ContextMenuRadioItem key={acc.id} value={acc.id}>
@@ -514,7 +514,7 @@ function JobMenu({
 
 /**
  * The account a job downloads with, or null when only one account exists. A
- * job the mixer chooses for shows as "Any account" until it starts.
+ * job the shuffler chooses for shows as "Any account" until it starts.
  */
 function useJobAccount(job: Job) {
   const { settings, mixer, accountStatus } = useBackend()
@@ -529,14 +529,14 @@ function useJobAccount(job: Job) {
   return accounts.find((a) => a.id === settings?.activeAccount) ?? null
 }
 
-/** Shows each account's mixer state: downloading, resting or ready. */
+/** Shows each account's shuffler state: downloading, resting or ready. */
 function MixerStrip() {
   const { accountStatus } = useBackend()
   const now = useNow()
   return (
     <div className="flex flex-wrap items-center gap-2 border-b px-8 py-2.5 text-xs">
       <span className="flex items-center gap-1.5 font-medium">
-        <ShuffleIcon className="size-3.5 text-primary" /> Mixer
+        <ShuffleIcon className="size-3.5 text-primary" /> Shuffler
       </span>
       {accountStatus.filter((s) => s.inMixer || s.busy).map((s) => {
         const resting = s.readyAt && new Date(s.readyAt).getTime() > now
