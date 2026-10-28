@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.0
+
+First release of this fork, including the CLI and desktop app.
+
+Based on [CuteTenshii/crunchyroll-downloader](https://github.com/CuteTenshii/crunchyroll-downloader), originally created by [CuteTenshii](https://github.com/CuteTenshii). Thanks to CuteTenshii and the upstream contributors for the original downloader, released under the [MIT license](LICENSE.txt).
+
+- Added a desktop GUI for Windows, Linux and macOS, with series and episode browsing, episode selection, download progress and a persistent queue.
+- Added saved accounts, per-episode account selection and an account shuffler with per-account rest periods and cooldowns.
+- Moved the CLI downloader into a reusable package shared with the GUI.
+- Added a configurable simultaneous playback session limit and randomized delays between episodes.
+- Improved download reliability with HTTP/1.1, retries for interrupted subtitles and manifests, and resumable bounded-range media downloads.
+- Added automated CLI and GUI release builds for Windows amd64, Linux amd64, and macOS arm64 and amd64, with SHA256 checksums.
+
+FFmpeg and Widevine CDM files are required. Linux GUI builds require GTK 4 and WebKitGTK 6. Binaries are not certificate-signed or notarized.
+
+## Upstream history
+
+The entries below describe releases inherited from [CuteTenshii/crunchyroll-downloader](https://github.com/CuteTenshii/crunchyroll-downloader).
+
 ## 1.6.0
 
 - Added `--download-delay` to wait a minimum time between episode downloads, which helps avoid Crunchyroll's rate limiting on season and batch downloads ([#42](https://github.com/CuteTenshii/crunchyroll-downloader/issues/42), [#57](https://github.com/CuteTenshii/crunchyroll-downloader/issues/57))

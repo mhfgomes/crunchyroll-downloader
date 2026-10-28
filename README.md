@@ -1,14 +1,14 @@
 # Crunchyroll Downloader
 
-[![Tests](https://img.shields.io/github/actions/workflow/status/CuteTenshii/crunchyroll-downloader/tests.yml?branch=master&label=tests)](https://github.com/CuteTenshii/crunchyroll-downloader/actions/workflows/tests.yml)
-[![Latest release](https://img.shields.io/github/v/release/CuteTenshii/crunchyroll-downloader)](https://github.com/CuteTenshii/crunchyroll-downloader/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/CuteTenshii/crunchyroll-downloader/total)](https://github.com/CuteTenshii/crunchyroll-downloader/releases)
-[![Go version](https://img.shields.io/github/go-mod/go-version/CuteTenshii/crunchyroll-downloader)](go.mod)
-[![License](https://img.shields.io/github/license/CuteTenshii/crunchyroll-downloader)](LICENSE.txt)
+[![Tests](https://img.shields.io/github/actions/workflow/status/mhfgomes/crunchyroll-downloader/tests.yml?branch=master&label=tests)](https://github.com/mhfgomes/crunchyroll-downloader/actions/workflows/tests.yml)
+[![Latest release](https://img.shields.io/github/v/release/mhfgomes/crunchyroll-downloader)](https://github.com/mhfgomes/crunchyroll-downloader/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/mhfgomes/crunchyroll-downloader/total)](https://github.com/mhfgomes/crunchyroll-downloader/releases)
+[![Go version](https://img.shields.io/github/go-mod/go-version/mhfgomes/crunchyroll-downloader)](go.mod)
+[![License](https://img.shields.io/github/license/mhfgomes/crunchyroll-downloader)](LICENSE.txt)
 
 Downloads anime from Crunchyroll and outputs them in a MKV file.
 
-You won't be banned or anything, I downloaded all Kaguya-Sama seasons to test during 30 mins and everything went fine
+This project is a fork of [CuteTenshii/crunchyroll-downloader](https://github.com/CuteTenshii/crunchyroll-downloader), originally created by [CuteTenshii](https://github.com/CuteTenshii). Credit for the original downloader goes to CuteTenshii and the upstream contributors. This fork adds the desktop app and the changes documented in [the changelog](CHANGELOG.md), while preserving the original [MIT license and copyright notice](LICENSE.txt).
 
 ## Features
 
@@ -30,7 +30,7 @@ You won't be banned or anything, I downloaded all Kaguya-Sama seasons to test du
 
 ## Download
 
-Check the [latest release](https://github.com/CuteTenshii/crunchyroll-downloader/releases/latest) and download the file that corresponds to your OS.
+Check the [latest release](https://github.com/mhfgomes/crunchyroll-downloader/releases/latest) and download the file that corresponds to your OS.
 
 ## Usage
 
@@ -116,13 +116,13 @@ Prefer a window to a terminal? Download `crdl-gui-windows-amd64.exe`, `crdl-gui-
 Push a version tag to build and publish the CLI and GUI for Windows amd64, Linux amd64, and macOS arm64 and amd64:
 
 ```shell
-git tag v1.2.3
-git push origin v1.2.3
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 The release workflow waits for every build before publishing assets and `SHA256SUMS`. Windows executables include icons and version metadata; macOS GUI archives contain an app bundle with its icon and an ad-hoc signature. Builds are not certificate-signed or notarized.
 
-To build release assets locally for your host OS, install the GUI build prerequisites (including Wails v3.0.0 and Python 3), then run `python scripts/release.py v1.2.3`. Outputs are written to `dist/`. Version metadata is taken from the tag and source metadata is restored after the build.
+To build release assets locally for your host OS, install the GUI build prerequisites (including Wails v3.0.0 and Python 3), then run `python scripts/release.py v0.1.0`. Outputs are written to `dist/`. Version metadata is taken from the tag and source metadata is restored after the build.
 
 ## Building
 
