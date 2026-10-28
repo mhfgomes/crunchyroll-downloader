@@ -109,7 +109,20 @@ If Crunchyroll rate-limits an episode anyway, it's retried in place (starting at
 
 ## Desktop app
 
-Prefer a window to a terminal? Download `crdl-gui-windows.exe`, `crdl-gui-linux`, `crdl-gui-macos-arm64` or `crdl-gui-macos-x64` from the latest release. Paste a series or episode link, choose the episodes, and follow each download's progress in the queue. The cookie, languages, qualities, output folder and Widevine CDM location are set once in Settings. FFmpeg is still required. See [gui/README.md](gui/README.md) to build it yourself.
+Prefer a window to a terminal? Download `crdl-gui-windows-amd64.exe`, `crdl-gui-linux-amd64.tar.gz`, or `crdl-gui-macos-{arm64,amd64}.zip` from the latest release. Extract the macOS archive and open the `.app`. The Linux archive includes `bin/crdl-gui`, a desktop launcher and its icon; install these under `~/.local` to integrate with your desktop (GTK 4 and WebKitGTK 6 are required). Paste a series or episode link, choose the episodes, and follow each download's progress in the queue. The cookie, languages, qualities, output folder and Widevine CDM location are set once in Settings. FFmpeg is still required. See [gui/README.md](gui/README.md) to build it yourself.
+
+## Releases
+
+Push a version tag to build and publish the CLI and GUI for Windows amd64, Linux amd64, and macOS arm64 and amd64:
+
+```shell
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+The release workflow waits for every build before publishing assets and `SHA256SUMS`. Windows executables include icons and version metadata; macOS GUI archives contain an app bundle with its icon and an ad-hoc signature. Builds are not certificate-signed or notarized.
+
+To build release assets locally for your host OS, install the GUI build prerequisites (including Wails v3.0.0 and Python 3), then run `python scripts/release.py v1.2.3`. Outputs are written to `dist/`. Version metadata is taken from the tag and source metadata is restored after the build.
 
 ## Building
 
