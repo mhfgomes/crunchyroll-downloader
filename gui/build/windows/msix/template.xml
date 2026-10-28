@@ -17,7 +17,7 @@
         PackageDisplayName="Crunchyroll Downloader"
         PublisherName="CN=CuteTenshii"
         PublisherDisplayName="CuteTenshii"
-        Version="0.1.0.0"
+        Version="0.1.1.0"
         PackageDescription="Download Crunchyroll episodes as MKV files">
         <Capabilities>
             <Capability Name="runFullTrust" />

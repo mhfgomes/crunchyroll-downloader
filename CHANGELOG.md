@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- Fixed audio starting ahead of video and subtitles on some episodes by preserving the source timestamps when merging tracks. This affects both the CLI and desktop app.
+- Added an FFmpeg regression test covering audio offsets, AAC priming timestamps, and subtitle timing.
+
+Existing downloads with this issue need to be remuxed or downloaded again with this version.
+
 ## 0.1.0
 
 First release of this fork, including the CLI and desktop app.
