@@ -11,3 +11,4 @@ private_key.pem
 # Compiled binaries
 /crunchyroll-downloader
 *.exe
+/dist/
