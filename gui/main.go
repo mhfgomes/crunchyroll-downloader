@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"runtime"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -33,6 +34,13 @@ func main() {
 		MinHeight:        600,
 		BackgroundColour: application.NewRGB(26, 27, 41),
 		URL:              "/",
+		// The frontend draws its own title bar (components/titlebar.tsx). On
+		// macOS the native traffic lights are kept over it instead.
+		Frameless: runtime.GOOS != "darwin",
+		Mac: application.MacWindow{
+			TitleBar:                application.MacTitleBarHiddenInsetUnified,
+			InvisibleTitleBarHeight: 36,
+		},
 	})
 
 	if err := app.Run(); err != nil {

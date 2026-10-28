@@ -23,22 +23,26 @@ func main() {
 	etpRt := flag.String("etp-rt", "", "The \"etp_rt\" cookie value of your account")
 	debug := flag.Bool("debug-manifest", false, "Log raw episode playback JSON and manifest XML")
 	downloadDelay := flag.Duration("download-delay", 0, "Minimum delay between episode downloads, to help avoid Crunchyroll's rate limiting (e.g. \"30s\", \"2m\")")
+	downloadDelayMax := flag.Duration("download-delay-max", 0, "With -download-delay, wait a random time between the two before each episode (e.g. \"30s\" to \"2m\")")
 	simultaneous := flag.Int("simultaneous", defaults.Simultaneous, "Maximum simultaneous playback sessions for audio and subtitle downloads; keep within your account's available stream slots")
 	output := flag.String("output-dir", defaults.OutputDir, "Target base path for downloading")
+	tempDir := flag.String("temp-dir", "", "Folder for track downloads before they are merged (default: the system temp folder)")
 	url := flag.String("url", "", "URL of the episode/season to download")
 	urlsFile := flag.String("file", "", "Path to a text file with one URL per line")
 	flag.Parse()
 
 	err := downloader.Configure(downloader.Options{
-		AudioLangs:    *audioLang,
-		SubsLangs:     *subtitlesLang,
-		CCLangs:       *ccLang,
-		VideoQuality:  *videoQuality,
-		AudioQuality:  *audioQuality,
-		OutputDir:     *output,
-		Simultaneous:  *simultaneous,
-		DownloadDelay: *downloadDelay,
-		DebugManifest: *debug,
+		AudioLangs:       *audioLang,
+		SubsLangs:        *subtitlesLang,
+		CCLangs:          *ccLang,
+		VideoQuality:     *videoQuality,
+		AudioQuality:     *audioQuality,
+		OutputDir:        *output,
+		TempDir:          *tempDir,
+		Simultaneous:     *simultaneous,
+		DownloadDelay:    *downloadDelay,
+		DownloadDelayMax: *downloadDelayMax,
+		DebugManifest:    *debug,
 	})
 	if err != nil {
 		fmt.Printf("-%s\n", err)

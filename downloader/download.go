@@ -75,15 +75,15 @@ func getFilename(set *mpd.AdaptationSet, subExt string) string {
 		if subExt == "" {
 			subExt = "ass"
 		}
-		f, _ := os.CreateTemp("", "crdl-subs-*."+subExt)
+		f, _ := os.CreateTemp(options.TempDir, "crdl-subs-*."+subExt)
 		return f.Name()
 	}
 	for _, representation := range set.Representations {
 		if representation.Height != nil {
-			f, _ := os.CreateTemp("", "crdl-video-*.mp4")
+			f, _ := os.CreateTemp(options.TempDir, "crdl-video-*.mp4")
 			return f.Name()
 		} else if representation.Bandwidth != nil {
-			f, _ := os.CreateTemp("", "crdl-audio-*.mp3")
+			f, _ := os.CreateTemp(options.TempDir, "crdl-audio-*.mp3")
 			return f.Name()
 		}
 	}
@@ -719,11 +719,7 @@ func downloadEpisodeWithRetry(baseContentId string, info EpisodeInfo, audioLangs
 			err = ctxErr
 		}
 		if !errors.Is(err, ErrRateLimited) {
-			logf("! %v", err)
-			ev := episodeEvent(baseContentId, info, StatusFailed)
-			ev.Error = err.Error()
-			emitEpisode(ev)
-			return err
+			return failEpisode(baseContentId, info, err)
 		}
 
 		wait := backoff.rateLimitWait()
@@ -735,6 +731,15 @@ func downloadEpisodeWithRetry(baseContentId string, info EpisodeInfo, audioLangs
 		emitEpisode(ev)
 		sleepCtx(wait)
 	}
+}
+
+// failEpisode reports err as the episode's final failure and returns it.
+func failEpisode(baseContentId string, info EpisodeInfo, err error) error {
+	logf("! %v", err)
+	ev := episodeEvent(baseContentId, info, StatusFailed)
+	ev.Error = err.Error()
+	emitEpisode(ev)
+	return err
 }
 
 // downloadSeason downloads every episode, moving past failed ones; it stops

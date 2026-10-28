@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"math/rand/v2"
 	"sync"
 	"time"
 )
@@ -11,8 +12,12 @@ import (
 // sleep are overridable so tests don't have to wait on the real clock.
 type downloadBackoff struct {
 	delay time.Duration
-	now   func() time.Time
-	sleep func(time.Duration)
+	// maxDelay, when above delay, makes each gap a random length between
+	// the two, so downloads don't start on a regular beat.
+	maxDelay time.Duration
+	gap      time.Duration // the gap the next wait enforces
+	now      func() time.Time
+	sleep    func(time.Duration)
 
 	mu            sync.Mutex
 	started       bool
@@ -28,8 +33,17 @@ const defaultRateLimitWait = time.Minute
 // consecutive rate-limit hits doesn't produce absurd delays.
 const maxRateLimitWait = 30 * time.Minute
 
-func newDownloadBackoff(delay time.Duration) *downloadBackoff {
-	return &downloadBackoff{delay: delay, now: time.Now, sleep: sleepCtx}
+func newDownloadBackoff(delay, maxDelay time.Duration) *downloadBackoff {
+	return &downloadBackoff{delay: delay, maxDelay: maxDelay, gap: delay, now: time.Now, sleep: sleepCtx}
+}
+
+// RandomBetween returns a random duration in [lo, hi], or lo when hi isn't
+// above it.
+func RandomBetween(lo, hi time.Duration) time.Duration {
+	if hi <= lo {
+		return lo
+	}
+	return lo + rand.N(hi-lo+1)
 }
 
 // wait blocks until delay has elapsed since the matching done call for the
@@ -45,7 +59,7 @@ func (b *downloadBackoff) wait() {
 		b.mu.Unlock()
 		return
 	}
-	remaining := b.delay - b.now().Sub(b.last)
+	remaining := b.gap - b.now().Sub(b.last)
 	b.mu.Unlock()
 
 	if remaining > 0 {
@@ -63,6 +77,7 @@ func (b *downloadBackoff) done() {
 	b.mu.Lock()
 	b.last = b.now()
 	b.started = true
+	b.gap = RandomBetween(b.delay, b.maxDelay)
 	b.mu.Unlock()
 }
 

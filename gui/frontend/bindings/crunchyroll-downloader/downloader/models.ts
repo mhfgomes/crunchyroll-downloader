@@ -37,6 +37,12 @@ export interface Options {
     "outputDir": string;
     "simultaneous": number;
     "downloadDelay": time$0.Duration;
+
+    /**
+     * DownloadDelayMax, when above DownloadDelay, makes each pause a random
+     * length between the two.
+     */
+    "downloadDelayMax": time$0.Duration;
     "debugManifest": boolean;
 
     /**
@@ -44,6 +50,12 @@ export interface Options {
      * empty means the working directory.
      */
     "widevinePath": string;
+
+    /**
+     * TempDir holds track downloads until they are merged; empty means the
+     * system temp folder.
+     */
+    "tempDir": string;
 }
 
 /**

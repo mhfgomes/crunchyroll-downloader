@@ -300,7 +300,7 @@ func tempMediaFile(isVideo bool) string {
 	if isVideo {
 		pattern = "crdl-video-*.mp4"
 	}
-	f, err := os.CreateTemp("", pattern)
+	f, err := os.CreateTemp(options.TempDir, pattern)
 	if err != nil {
 		return ""
 	}

@@ -11,7 +11,9 @@ import {
   PauseIcon,
   PlayIcon,
   RotateCwIcon,
+  ShuffleIcon,
   SkipForwardIcon,
+  UserIcon,
   XIcon,
 } from "lucide-react"
 
@@ -20,7 +22,12 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -59,7 +66,7 @@ const STATUS: Record<JobStatus, { label: string; className: string }> = {
 }
 
 export function QueueView({ onBrowse }: { onBrowse: () => void }) {
-  const { jobs, paused } = useBackend()
+  const { jobs, paused, mixer, waitUntil } = useBackend()
   const [drag, setDrag] = useState<{ id: string; over: number } | null>(null)
   const sortable =
     jobs.filter((j) => j.status === "queued" || j.status === "paused").length >
@@ -82,8 +89,15 @@ export function QueueView({ onBrowse }: { onBrowse: () => void }) {
           <p className="mt-2 text-sm text-muted-foreground">
             {paused
               ? "Paused. Nothing new starts until you resume."
-              : "Episodes download one at a time, in order. Right-click one to reorder it."}
+              : mixer
+                ? "Episodes download one at a time, shuffled onto the account that has rested longest."
+                : "Episodes download one at a time, in order. Right-click one to reorder it."}
           </p>
+          {!paused && waitUntil && (
+            <p className="mt-1 text-sm text-amber-300">
+              Every account is resting. <Countdown at={waitUntil} prefix="Next one is free in" />
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           {sortable && (
@@ -135,6 +149,7 @@ export function QueueView({ onBrowse }: { onBrowse: () => void }) {
           )}
         </div>
       </header>
+      {mixer && <MixerStrip />}
       <ScrollArea className="min-h-0 flex-1">
         {jobs.length === 0 ? (
           <div className="max-w-md px-8 pt-16">
@@ -209,6 +224,7 @@ function JobRow({
 }) {
   const t = job.title
   const status = STATUS[job.status]
+  const account = useJobAccount(job)
   const running =
     job.status === "downloading" ||
     job.status === "merging" ||
@@ -269,6 +285,12 @@ function JobRow({
               <div className="mt-0.5 truncate text-sm text-muted-foreground">
                 {t.seriesTitle}, {episodeCode(t)}
               </div>
+              {account && (
+                <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground">
+                  <UserIcon className="size-3 shrink-0" />
+                  {account.name || "Unnamed account"}
+                </div>
+              )}
             </div>
             <Actions job={job} />
           </div>
@@ -405,6 +427,10 @@ function JobMenu({
 }) {
   const a = jobActions(job)
   const move = (to: number) => void api.Move(job.id, to)
+  const { settings, mixer } = useBackend()
+  const accounts = settings?.accounts ?? []
+  const canChangeAccount =
+    accounts.length > 1 && !RUNNING.includes(job.status) && job.status !== "done" && job.status !== "skipped"
   return (
     <ContextMenuContent className="min-w-48">
       {a.resume && (
@@ -448,6 +474,31 @@ function JobMenu({
       <ContextMenuItem disabled={index === last} onClick={() => move(last)}>
         <ArrowDownToLineIcon /> Move to bottom
       </ContextMenuItem>
+      {canChangeAccount && (
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <UserIcon /> Download as
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuRadioGroup
+                value={job.accountId ?? ""}
+                onValueChange={(id) => void api.SetJobAccount(job.id, id as string)}
+              >
+                <ContextMenuRadioItem value="">
+                  {mixer ? "Any account (shuffler)" : "Active account"}
+                </ContextMenuRadioItem>
+                {accounts.map((acc) => (
+                  <ContextMenuRadioItem key={acc.id} value={acc.id}>
+                    {acc.name || "Unnamed account"}
+                  </ContextMenuRadioItem>
+                ))}
+              </ContextMenuRadioGroup>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        </>
+      )}
       <ContextMenuSeparator />
       <ContextMenuItem
         onClick={() => void api.OpenURL(episodeLink(job.title.id))}
@@ -458,6 +509,85 @@ function JobMenu({
         <XIcon /> {a.closeLabel}
       </ContextMenuItem>
     </ContextMenuContent>
+  )
+}
+
+/**
+ * The account a job downloads with, or null when only one account exists. A
+ * job the shuffler chooses for shows as "Any account" until it starts.
+ */
+function useJobAccount(job: Job) {
+  const { settings, mixer, accountStatus } = useBackend()
+  const accounts = settings?.accounts ?? []
+  if (accounts.length < 2) return null
+  const pinned = accounts.find((a) => a.id === job.accountId)
+  if (pinned) return pinned
+  if (mixer) {
+    const busy = RUNNING.includes(job.status) ? accountStatus.find((s) => s.busy) : undefined
+    return busy ?? { id: "", name: "Any account" }
+  }
+  return accounts.find((a) => a.id === settings?.activeAccount) ?? null
+}
+
+/** Shows each account's shuffler state: downloading, resting or ready. */
+function MixerStrip() {
+  const { accountStatus } = useBackend()
+  const now = useNow()
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-b px-8 py-2.5 text-xs">
+      <span className="flex items-center gap-1.5 font-medium">
+        <ShuffleIcon className="size-3.5 text-primary" /> Shuffler
+      </span>
+      {accountStatus.filter((s) => s.inMixer || s.busy).map((s) => {
+        const resting = s.readyAt && new Date(s.readyAt).getTime() > now
+        return (
+          <span
+            key={s.id}
+            title={resting ? s.reason : undefined}
+            className={cn(
+              "flex items-center gap-1.5 rounded-full border px-2 py-0.5",
+              s.busy && "border-primary/50 text-primary"
+            )}
+          >
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                s.busy ? "bg-primary" : resting ? "bg-amber-300" : "bg-emerald-400"
+              )}
+            />
+            {s.name || "Unnamed account"}
+            <span className="text-muted-foreground">
+              {s.busy ? "downloading" : resting ? formatLeft(new Date(s.readyAt!).getTime() - now) : "ready"}
+            </span>
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
+function useNow() {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  return now
+}
+
+function formatLeft(ms: number) {
+  const secs = Math.max(0, Math.round(ms / 1000))
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
+}
+
+function Countdown({ at, prefix }: { at: string; prefix: string }) {
+  const now = useNow()
+  return (
+    <>
+      {prefix} {formatLeft(new Date(at).getTime() - now)}
+    </>
   )
 }
 

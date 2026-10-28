@@ -11,6 +11,7 @@ import logo from "@/assets/logo.svg"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { EnvironmentStatus } from "@/components/environment-status"
+import { Titlebar } from "@/components/titlebar"
 import { BackendContext, useBackendState } from "@/hooks/use-backend"
 import { BrowseView } from "@/views/browse"
 import { LogsView } from "@/views/logs"
@@ -36,48 +37,56 @@ export function App() {
   return (
     <BackendContext.Provider value={backend}>
       <TooltipProvider>
-        <div className="flex h-full">
-          <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar">
-            <div className="flex items-center gap-2.5 px-3 pt-6 pb-7">
-              <img src={logo} alt="" className="size-11 shrink-0" />
-              <div className="font-heading text-[19px] leading-[0.95] font-extrabold tracking-tight">
-                Crunchyroll
-                <br />
-                <span className="text-primary">downloader</span>
+        <div className="flex h-full flex-col">
+          <Titlebar />
+          <div className="flex min-h-0 flex-1">
+            <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar">
+              <div className="flex items-center gap-2.5 px-3 pt-2 pb-7">
+                <img src={logo} alt="" className="size-11 shrink-0" />
+                <div className="font-heading text-[19px] leading-[0.95] font-extrabold tracking-tight">
+                  Crunchyroll
+                  <br />
+                  <span className="text-primary">downloader</span>
+                </div>
               </div>
-            </div>
-            <nav className="flex flex-col gap-0.5 px-2">
-              {NAV.map(({ id, label, icon: Icon }) => (
-                <button
-                  key={id}
-                  onClick={() => setView(id)}
-                  className={cn(
-                    "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-                    view === id && "bg-accent font-medium text-foreground"
-                  )}
-                >
-                  <Icon className="size-4" />
-                  {label}
-                  {id === "queue" && active > 0 && (
-                    <span className="ml-auto rounded-full bg-primary px-1.5 text-[11px] leading-[18px] font-semibold text-primary-foreground tabular-nums">
-                      {active}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </nav>
-            <div className="mt-auto p-3">
-              <EnvironmentStatus onOpenSettings={() => setView("settings")} />
-            </div>
-          </aside>
-          <main className="relative min-w-0 flex-1">
-            {view === "browse" && (
-              <BrowseView onQueued={() => setView("queue")} onOpenSettings={() => setView("settings")} />
-            )}
-            {view === "queue" && <QueueView onBrowse={() => setView("browse")} />}
-            {view === "settings" && <SettingsView />}
-            {view === "logs" && <LogsView />}
-          </main>
+              <nav className="flex flex-col gap-0.5 px-2">
+                {NAV.map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    onClick={() => setView(id)}
+                    className={cn(
+                      "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+                      view === id && "bg-accent font-medium text-foreground"
+                    )}
+                  >
+                    <Icon className="size-4" />
+                    {label}
+                    {id === "queue" && active > 0 && (
+                      <span className="ml-auto rounded-full bg-primary px-1.5 text-[11px] leading-[18px] font-semibold text-primary-foreground tabular-nums">
+                        {active}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </nav>
+              <div className="mt-auto p-3">
+                <EnvironmentStatus onOpenSettings={() => setView("settings")} />
+              </div>
+            </aside>
+            <main className="relative min-w-0 flex-1">
+              {view === "browse" && (
+                <BrowseView
+                  onQueued={() => setView("queue")}
+                  onOpenSettings={() => setView("settings")}
+                />
+              )}
+              {view === "queue" && (
+                <QueueView onBrowse={() => setView("browse")} />
+              )}
+              {view === "settings" && <SettingsView />}
+              {view === "logs" && <LogsView />}
+            </main>
+          </div>
         </div>
         <Toaster position="bottom-right" />
       </TooltipProvider>

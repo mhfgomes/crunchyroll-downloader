@@ -7,7 +7,7 @@ import (
 
 func TestDownloadBackoffFirstWaitIsNoop(t *testing.T) {
 	var slept time.Duration
-	b := newDownloadBackoff(5 * time.Second)
+	b := newDownloadBackoff(5*time.Second, 0)
 	b.sleep = func(d time.Duration) { slept = d }
 
 	b.wait()
@@ -19,7 +19,7 @@ func TestDownloadBackoffFirstWaitIsNoop(t *testing.T) {
 func TestDownloadBackoffWaitsRemainingDelay(t *testing.T) {
 	now := time.Unix(0, 0)
 	var slept time.Duration
-	b := newDownloadBackoff(5 * time.Second)
+	b := newDownloadBackoff(5*time.Second, 0)
 	b.now = func() time.Time { return now }
 	b.sleep = func(d time.Duration) { slept = d; now = now.Add(d) }
 
@@ -34,7 +34,7 @@ func TestDownloadBackoffWaitsRemainingDelay(t *testing.T) {
 func TestDownloadBackoffSkipsWaitWhenDelayElapsed(t *testing.T) {
 	now := time.Unix(0, 0)
 	var slept time.Duration
-	b := newDownloadBackoff(5 * time.Second)
+	b := newDownloadBackoff(5*time.Second, 0)
 	b.now = func() time.Time { return now }
 	b.sleep = func(d time.Duration) { slept = d }
 
@@ -48,7 +48,7 @@ func TestDownloadBackoffSkipsWaitWhenDelayElapsed(t *testing.T) {
 
 func TestDownloadBackoffDisabledIsNoop(t *testing.T) {
 	var slept time.Duration
-	b := newDownloadBackoff(0)
+	b := newDownloadBackoff(0, 0)
 	b.sleep = func(d time.Duration) { slept = d }
 
 	b.done()
@@ -65,7 +65,7 @@ func TestDownloadBackoffNilIsNoop(t *testing.T) {
 }
 
 func TestRateLimitWaitGrowsAndCaps(t *testing.T) {
-	b := newDownloadBackoff(0)
+	b := newDownloadBackoff(0, 0)
 
 	want := []time.Duration{
 		defaultRateLimitWait,
@@ -89,14 +89,14 @@ func TestRateLimitWaitGrowsAndCaps(t *testing.T) {
 }
 
 func TestRateLimitWaitUsesConfiguredDelayAsFloor(t *testing.T) {
-	b := newDownloadBackoff(5 * time.Minute)
+	b := newDownloadBackoff(5*time.Minute, 0)
 	if got := b.rateLimitWait(); got != 5*time.Minute {
 		t.Fatalf("rateLimitWait() = %v, want configured delay 5m as the floor", got)
 	}
 }
 
 func TestRateLimitWaitResets(t *testing.T) {
-	b := newDownloadBackoff(0)
+	b := newDownloadBackoff(0, 0)
 	b.rateLimitWait()
 	b.rateLimitWait()
 	b.resetRateLimit()
@@ -112,4 +112,25 @@ func TestRateLimitWaitNilIsSafe(t *testing.T) {
 		t.Fatalf("nil backoff rateLimitWait() = %v, want %v", got, defaultRateLimitWait)
 	}
 	b.resetRateLimit() // must not panic
+}
+
+func TestRandomBetween(t *testing.T) {
+	if got := RandomBetween(time.Minute, 0); got != time.Minute {
+		t.Fatalf("no range: got %s", got)
+	}
+	for range 200 {
+		if got := RandomBetween(time.Minute, 3*time.Minute); got < time.Minute || got > 3*time.Minute {
+			t.Fatalf("out of range: %s", got)
+		}
+	}
+}
+
+func TestBackoffRandomGap(t *testing.T) {
+	b := newDownloadBackoff(time.Minute, 2*time.Minute)
+	for range 50 {
+		b.done()
+		if b.gap < time.Minute || b.gap > 2*time.Minute {
+			t.Fatalf("gap out of range: %s", b.gap)
+		}
+	}
 }

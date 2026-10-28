@@ -20,11 +20,73 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
+// Account is a saved Crunchyroll login.
+type Account struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	EtpRt string `json:"etpRt"`
+	// NoMixer leaves the account out of the mixer; jobs pinned to it still
+	// use it.
+	NoMixer bool `json:"noMixer,omitempty"`
+}
+
 // Settings is everything the GUI persists between launches.
 type Settings struct {
-	EtpRt      string             `json:"etpRt"`
-	FFmpegPath string             `json:"ffmpegPath"`
-	Options    downloader.Options `json:"options"`
+	// EtpRt is the single cookie saved by earlier versions; normalize moves it
+	// into Accounts.
+	EtpRt         string    `json:"etpRt,omitempty"`
+	Accounts      []Account `json:"accounts"`
+	ActiveAccount string    `json:"activeAccount"`
+	// Mixer spreads episodes queued without a fixed account over every
+	// account; see mixer.go.
+	Mixer bool `json:"mixer"`
+	// RateLimitTimeout is how long an account sits out after Crunchyroll
+	// rate-limits it. Zero means automatic: a minute, doubling on hits in a
+	// row up to 30 minutes.
+	RateLimitTimeout time.Duration `json:"rateLimitTimeout"`
+	// RateLimitTimeoutMax, when above RateLimitTimeout, makes each timeout
+	// a random length between the two.
+	RateLimitTimeoutMax time.Duration      `json:"rateLimitTimeoutMax"`
+	FFmpegPath          string             `json:"ffmpegPath"`
+	Options             downloader.Options `json:"options"`
+}
+
+// account returns the account with the given ID, or nil.
+func (s Settings) account(id string) *Account {
+	for i := range s.Accounts {
+		if s.Accounts[i].ID == id {
+			return &s.Accounts[i]
+		}
+	}
+	return nil
+}
+
+// normalize migrates the legacy cookie and keeps ActiveAccount pointing at a
+// saved account whenever there is one.
+func (s *Settings) normalize() {
+	if s.EtpRt != "" {
+		if len(s.Accounts) == 0 {
+			s.Accounts = []Account{{ID: "1", Name: "Main", EtpRt: s.EtpRt}}
+		}
+		s.EtpRt = ""
+	}
+	if s.Accounts == nil {
+		s.Accounts = []Account{}
+	}
+	if s.account(s.ActiveAccount) == nil {
+		s.ActiveAccount = ""
+		if len(s.Accounts) > 0 {
+			s.ActiveAccount = s.Accounts[0].ID
+		}
+	}
+}
+
+// activeCookie is the etp_rt cookie of the active account.
+func (s Settings) activeCookie() string {
+	if acc := s.account(s.ActiveAccount); acc != nil {
+		return acc.EtpRt
+	}
+	return ""
 }
 
 // JobStatus is the lifecycle of a queued episode.
@@ -54,19 +116,28 @@ type Track struct {
 
 // Job is one episode in the download queue.
 type Job struct {
-	ID      string           `json:"id"`
-	Title   downloader.Title `json:"title"`
-	Status  JobStatus        `json:"status"`
-	Error   string           `json:"error,omitempty"`
-	Output  string           `json:"output,omitempty"`
-	RetryAt *time.Time       `json:"retryAt,omitempty"`
-	Tracks  []Track          `json:"tracks"`
+	ID    string           `json:"id"`
+	Title downloader.Title `json:"title"`
+	// AccountID is the account the job downloads with. Empty, or an account
+	// that was since removed, means the active one.
+	AccountID string     `json:"accountId,omitempty"`
+	Status    JobStatus  `json:"status"`
+	Error     string     `json:"error,omitempty"`
+	Output    string     `json:"output,omitempty"`
+	RetryAt   *time.Time `json:"retryAt,omitempty"`
+	Tracks    []Track    `json:"tracks"`
 }
 
 // QueueState is the queue as the frontend sees it.
 type QueueState struct {
 	Paused bool   `json:"paused"`
 	Jobs   []*Job `json:"jobs"`
+	// Mixer reports whether downloads are spread over accounts, and
+	// Accounts how each one is doing.
+	Mixer    bool            `json:"mixer"`
+	Accounts []AccountStatus `json:"accounts"`
+	// WaitUntil is set while every account the queue could use is resting.
+	WaitUntil *time.Time `json:"waitUntil,omitempty"`
 }
 
 // stopReason records why the running job's context was cancelled.
@@ -85,6 +156,7 @@ type Environment struct {
 	FFmpegError string `json:"ffmpegError,omitempty"`
 	Widevine    bool   `json:"widevine"`
 	LoggedIn    bool   `json:"loggedIn"`
+	Account     string `json:"account,omitempty"`
 	LoginError  string `json:"loginError,omitempty"`
 }
 
@@ -118,10 +190,29 @@ type App struct {
 	lastEmit  time.Time
 	emitTimer *time.Timer
 	logs      []LogLine
+	// loginMu guards session, the cookie the downloader is logged in with.
+	loginMu sync.Mutex
+	session string
+
+	// accState is the mixer's view of each account, and currentAccount the
+	// account of the running job.
+	accState       map[string]*accountState
+	currentAccount string
+	waitUntil      *time.Time
 }
 
 func NewApp() *App {
-	return &App{wake: make(chan struct{}, 1)}
+	return &App{wake: make(chan struct{}, 1), accState: map[string]*accountState{}}
+}
+
+// configure applies s to the downloader. With the mixer on, the pause
+// between episodes is kept per account here instead of globally.
+func configure(s Settings) error {
+	opts := s.Options
+	if s.mixerOn() {
+		opts.DownloadDelay, opts.DownloadDelayMax = 0, 0
+	}
+	return downloader.Configure(opts)
 }
 
 // ServiceStartup runs when the Wails application starts.
@@ -133,6 +224,7 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 	}
 	a.store = st
 	a.settings = st.loadSettings(defaultSettings())
+	a.settings.normalize()
 	if jobs, paused, err := st.loadQueue(); err == nil {
 		a.jobs, a.paused = jobs, paused
 		for _, j := range jobs {
@@ -141,9 +233,12 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 			}
 		}
 	}
-	if err := downloader.Configure(a.settings.Options); err != nil {
+	if state, err := st.loadAccountState(); err == nil {
+		a.accState = state
+	}
+	if err := configure(a.settings); err != nil {
 		a.settings.Options = downloader.DefaultOptions()
-		_ = downloader.Configure(a.settings.Options)
+		_ = configure(a.settings)
 	}
 	downloader.SetHooks(downloader.Hooks{
 		Log:      a.onLog,
@@ -160,7 +255,7 @@ func (a *App) ServiceShutdown() error {
 		return nil
 	}
 	a.mu.Lock()
-	err := a.store.saveQueue(a.jobs, a.paused)
+	err := errors.Join(a.store.saveQueue(a.jobs, a.paused), a.store.saveAccountState(a.accState))
 	a.mu.Unlock()
 	return errors.Join(err, a.store.Close())
 }
@@ -188,17 +283,31 @@ func (a *App) DefaultOptions() downloader.Options {
 // SaveSettings validates, applies and persists settings. It blocks until any
 // running download finishes with the old options.
 func (a *App) SaveSettings(s Settings) (Environment, error) {
-	if err := downloader.Configure(s.Options); err != nil {
+	if err := a.checkUnlocked(); err != nil {
 		return a.Environment(), err
 	}
+	s.normalize()
+	if err := configure(s); err != nil {
+		return a.Environment(), err
+	}
+	ids := map[string]bool{}
+	for _, acc := range s.Accounts {
+		if acc.ID == "" || ids[acc.ID] {
+			return a.Environment(), errors.New("every account needs a unique ID")
+		}
+		ids[acc.ID] = true
+	}
 	a.mu.Lock()
-	cookieChanged := s.EtpRt != a.settings.EtpRt
+	cookieChanged := s.activeCookie() != a.settings.activeCookie()
 	a.settings = s
 	err := a.store.saveSettings(s)
 	a.mu.Unlock()
 	if err != nil {
 		return a.Environment(), fmt.Errorf("saving settings: %w", err)
 	}
+	// The mixer or the accounts may have changed which jobs can start.
+	a.signal()
+	a.emitQueue(true)
 	if cookieChanged {
 		return a.CheckEnvironment(), nil
 	}
@@ -215,6 +324,59 @@ func (a *App) Environment() Environment {
 // CheckEnvironment locates ffmpeg and the CDM and logs in.
 func (a *App) CheckEnvironment() Environment {
 	return a.refreshEnvironment(true)
+}
+
+// SwitchAccount makes id the active account, which new jobs are queued with,
+// and signs in with it.
+func (a *App) SwitchAccount(id string) (Environment, error) {
+	if err := a.checkUnlocked(); err != nil {
+		return a.Environment(), err
+	}
+	a.mu.Lock()
+	s := a.settings
+	a.mu.Unlock()
+	if s.account(id) == nil {
+		return a.Environment(), errors.New("that account no longer exists")
+	}
+	s.Accounts = slices.Clone(s.Accounts)
+	s.ActiveAccount = id
+	return a.SaveSettings(s)
+}
+
+// login signs the downloader in with cookie unless it already is. The worker
+// calls it after setting a.current.
+func (a *App) login(cookie string) error {
+	a.loginMu.Lock()
+	defer a.loginMu.Unlock()
+	if cookie == a.session {
+		return nil
+	}
+	if err := downloader.Login(cookie); err != nil {
+		return err
+	}
+	a.session = cookie
+	return nil
+}
+
+// checkLogin verifies cookie with Crunchyroll. When nothing is downloading it
+// also signs in with it, so browsing uses that account; otherwise the running
+// download's session, which may belong to another account, is left alone.
+func (a *App) checkLogin(cookie string) error {
+	a.loginMu.Lock()
+	defer a.loginMu.Unlock()
+	a.mu.Lock()
+	busy := a.current != nil
+	a.mu.Unlock()
+	if busy {
+		_, err := downloader.GetAccessToken(cookie)
+		return err
+	}
+	a.session = ""
+	if err := downloader.Login(cookie); err != nil {
+		return err
+	}
+	a.session = cookie
+	return nil
 }
 
 func (a *App) refreshEnvironment(login bool) Environment {
@@ -238,11 +400,22 @@ func (a *App) refreshEnvironment(login bool) Environment {
 	}
 	env.Widevine = downloader.HasWidevineDevice()
 
+	env.Account = ""
+	if acc := s.account(s.ActiveAccount); acc != nil {
+		env.Account = acc.Name
+	}
 	if login {
 		env.LoggedIn, env.LoginError = false, ""
-		switch err := downloader.Login(s.EtpRt); {
-		case s.EtpRt == "":
-			env.LoginError = "No etp_rt cookie saved yet."
+		cookie := s.activeCookie()
+		var err error
+		if cookie != "" {
+			err = a.checkLogin(cookie)
+		}
+		switch {
+		case len(s.Accounts) == 0:
+			env.LoginError = "No account added yet."
+		case cookie == "":
+			env.LoginError = "The active account has no etp_rt cookie."
 		case errors.Is(err, downloader.ErrAuthRejected):
 			env.LoginError = "Crunchyroll rejected the etp_rt cookie. Copy a fresh one from your browser."
 		case err != nil:
@@ -291,12 +464,24 @@ func (a *App) Enqueue(titles []downloader.Title) QueueState {
 			continue
 		}
 		a.nextID++
-		a.jobs = append(a.jobs, &Job{ID: strconv.Itoa(a.nextID), Title: t, Status: JobQueued, Tracks: []Track{}})
+		a.jobs = append(a.jobs, &Job{
+			ID: strconv.Itoa(a.nextID), Title: t, AccountID: a.queueAccountLocked(),
+			Status: JobQueued, Tracks: []Track{},
+		})
 	}
 	a.mu.Unlock()
 	a.signal()
 	a.emitQueue(true)
 	return a.Queue()
+}
+
+// queueAccountLocked is the account new jobs are tied to: none with the
+// mixer on, so it can choose, otherwise the active one.
+func (a *App) queueAccountLocked() string {
+	if a.settings.mixerOn() {
+		return ""
+	}
+	return a.settings.ActiveAccount
 }
 
 func isActive(s JobStatus) bool {
@@ -317,7 +502,40 @@ func (a *App) snapshotLocked() QueueState {
 		c.Tracks = append([]Track{}, j.Tracks...)
 		out[i] = &c
 	}
-	return QueueState{Paused: a.paused, Jobs: out}
+	return QueueState{
+		Paused: a.paused, Jobs: out,
+		Mixer: a.settings.mixerOn(), Accounts: a.accountStatusLocked(time.Now()), WaitUntil: a.waitUntil,
+	}
+}
+
+// errSettingsLocked is returned when settings change while the queue runs.
+var errSettingsLocked = errors.New("pause the queue before changing settings")
+
+// runningLocked reports whether the queue is working: something is
+// downloading, or it isn't paused and has episodes waiting to start. Settings
+// are locked meanwhile so a download never sees them change halfway.
+func (a *App) runningLocked() bool {
+	if a.current != nil {
+		return true
+	}
+	if a.paused {
+		return false
+	}
+	for _, j := range a.jobs {
+		if j.Status == JobQueued || j.Status == JobWaiting {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) checkUnlocked() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.runningLocked() {
+		return errSettingsLocked
+	}
+	return nil
 }
 
 // update runs fn under the lock, then wakes the worker and publishes the queue.
@@ -459,6 +677,19 @@ func (a *App) RetryFailed() {
 	})
 }
 
+// SetJobAccount changes which account a job that isn't running downloads
+// with. An empty accountID leaves the choice to the mixer, or to the active
+// account when the mixer is off.
+func (a *App) SetJobAccount(id, accountID string) {
+	a.update(func() {
+		_, j := a.findLocked(id)
+		if j == nil || j == a.current || (accountID != "" && a.settings.account(accountID) == nil) {
+			return
+		}
+		j.AccountID = accountID
+	})
+}
+
 // Cancel stops a running job or drops a queued one.
 func (a *App) Cancel(id string) {
 	a.mu.Lock()
@@ -534,27 +765,103 @@ func (a *App) signal() {
 func (a *App) worker() {
 	for {
 		a.mu.Lock()
+		now := time.Now()
+		mix := a.settings.mixerOn()
+		timed := a.settings.RateLimitTimeout > 0
 		var job *Job
-		for _, j := range a.jobs {
-			if j.Status == JobQueued && !a.paused {
-				job = j
-				break
+		var acc *Account
+		var until time.Time
+		if !a.paused {
+			if mix {
+				job, acc, until = a.nextMixedLocked(now)
+			} else {
+				for _, j := range a.jobs {
+					if j.Status == JobQueued {
+						job = j
+						break
+					}
+				}
+				if job != nil {
+					acc = a.settings.account(job.AccountID)
+					if acc == nil {
+						acc = a.settings.account(a.settings.ActiveAccount)
+					}
+					// With a time-out set, wait out a timed-out account.
+					if st := a.accState[acc.idOrEmpty()]; timed && st != nil && st.readyAt.After(now) {
+						job, acc, until = nil, nil, st.readyAt
+					}
+				}
 			}
 		}
 		if job == nil {
+			changed := (a.waitUntil == nil) != until.IsZero() || (a.waitUntil != nil && !a.waitUntil.Equal(until))
+			a.waitUntil = nil
+			if !until.IsZero() {
+				a.waitUntil = &until
+			}
 			a.mu.Unlock()
-			<-a.wake
+			if changed {
+				a.emitQueue(false)
+			}
+			if until.IsZero() {
+				<-a.wake
+			} else {
+				t := time.NewTimer(time.Until(until))
+				select {
+				case <-a.wake:
+				case <-t.C:
+				}
+				t.Stop()
+			}
 			continue
 		}
 		ctx, cancel := context.WithCancel(a.ctx)
-		a.current, a.cancel, a.stop = job, cancel, stopCancel
+		a.current, a.cancel, a.stop, a.waitUntil = job, cancel, stopCancel, nil
 		job.Status, job.Error = JobDownloading, ""
+		var cookie, accName string
+		if acc != nil {
+			cookie, accName, a.currentAccount = acc.EtpRt, acc.Name, acc.ID
+		}
+		multi := len(a.settings.Accounts) > 1
 		a.mu.Unlock()
 		a.emitQueue(true)
 
-		err := downloader.DownloadTitle(ctx, job.Title)
+		var err error
+		loginFailed := false
+		if cookie != "" {
+			if err = a.login(cookie); err != nil {
+				err, loginFailed = fmt.Errorf("signing in as %s: %w", accName, err), true
+			} else if multi {
+				a.onLog("Downloading as " + accName)
+			}
+		}
+		if err == nil {
+			if mix || timed {
+				err = downloader.DownloadTitleOnce(ctx, job.Title)
+			} else {
+				err = downloader.DownloadTitle(ctx, job.Title)
+			}
+		}
 
 		a.mu.Lock()
+		now = time.Now()
+		pause := downloader.RandomBetween(a.settings.Options.DownloadDelay, a.settings.Options.DownloadDelayMax)
+		var st *accountState
+		if (mix || timed) && acc != nil {
+			st = a.stateLocked(acc.ID)
+			st.lastUsed = now
+		}
+		benched := false
+		bench := func(d time.Duration, reason string) {
+			benched = true
+			st.readyAt, st.reason = now.Add(d), reason
+			next := "it moves to another account"
+			if !mix {
+				next = "it waits until " + st.readyAt.Local().Format(time.Kitchen)
+			}
+			job.Status, job.Error = JobQueued, fmt.Sprintf("%s on %s, so %s.", reason, accName, next)
+			go a.onLog(fmt.Sprintf("%s on %s. Resting it until %s.", reason, accName, st.readyAt.Local().Format(time.Kitchen)))
+		}
 		switch {
 		case ctx.Err() != nil:
 			switch a.stop {
@@ -567,13 +874,40 @@ func (a *App) worker() {
 			default:
 				job.Status = JobCancelled
 			}
+		case st != nil && errors.Is(err, downloader.ErrRateLimited):
+			st.hits++
+			bench(cooldown(st.hits, a.settings.Options.DownloadDelay,
+				downloader.RandomBetween(a.settings.RateLimitTimeout, a.settings.RateLimitTimeoutMax)), "Rate-limited")
+		case mix && errors.Is(err, downloader.ErrActiveStreams):
+			bench(streamsCooldown, "Too many open streams")
+		case mix && loginFailed:
+			bench(loginCooldown, "Sign-in failed")
+			if job.AccountID != "" {
+				job.Status, job.Error = JobFailed, err.Error()
+			}
 		case err != nil:
 			job.Status, job.Error = JobFailed, err.Error()
 		case job.Status != JobSkipped:
 			job.Status = JobDone
 		}
+		if mix && st != nil && !benched {
+			// Finished one way or another; rest before this account's next
+			// episode.
+			st.hits, st.readyAt, st.reason = 0, now.Add(pause), "Resting"
+			if pause <= 0 {
+				st.reason = ""
+			}
+		}
+		if st != nil && !mix && !benched {
+			st.hits = 0
+		}
+		if st != nil && a.store != nil {
+			if err := a.store.saveAccountState(a.accState); err != nil {
+				go a.onLog("Couldn't save the account shuffler state: " + err.Error())
+			}
+		}
 		job.Tracks, job.RetryAt = []Track{}, nil
-		a.current, a.cancel = nil, nil
+		a.current, a.cancel, a.currentAccount = nil, nil, ""
 		a.mu.Unlock()
 		cancel()
 		a.emitQueue(true)
